@@ -20,6 +20,9 @@ Group=root
 # Give firecracker room for per-VM sockets/overlays and pipes.
 LimitNOFILE=1048576
 LimitNPROC=65536
+# Delegate the cgroup subtree so boringd can put each firecracker child in a
+# per-VM cgroup with CPU/memory/pids caps (untrusted-guest resource control).
+Delegate=yes
 # Keep the working state on the box.
 RuntimeDirectory=boring
 StateDirectory=boring

@@ -34,25 +34,41 @@ type Config struct {
 	// Guest machine sizing.
 	VCPUs     int
 	MemSizeMB int
+
+	// Public-facing abuse controls.
+	PerIPMax         int  // max concurrent machines per client IP
+	CreateRatePerMin int  // max creations per minute per client IP
+	TrustProxy       bool // read client IP from X-Forwarded-For (behind Caddy)
+
+	// Per-VM cgroup v2 caps (0 disables that limit).
+	CgroupEnable  bool
+	CPUMaxPercent int // host CPU % cap per VM (e.g. 100 = 1 core)
+	PidsMax       int // max host-visible pids for the firecracker child
 }
 
 // LoadConfig builds a Config from the environment, applying the fixed defaults.
 func LoadConfig() Config {
 	c := Config{
-		Addr:           "0.0.0.0:8080",
-		Token:          os.Getenv("BORING_TOKEN"),
-		MaxMachines:    envInt("BORING_MAX", 20),
-		FirecrackerBin: envStr("BORING_FIRECRACKER_BIN", "/opt/boring/bin/firecracker"),
-		KernelPath:     envStr("BORING_KERNEL", "/opt/boring/kernel/vmlinux"),
-		BaseRootfs:     envStr("BORING_ROOTFS", "/opt/boring/rootfs/rootfs.ext4"),
-		DesktopRootfs:  envStr("BORING_DESKTOP_ROOTFS", "/opt/boring/rootfs/desktop.ext4"),
-		TemplatesDir:   envStr("BORING_TEMPLATES", "/opt/boring/templates"),
-		RunDir:         envStr("BORING_RUN", "/opt/boring/run"),
-		DefaultTTL:     120,
-		MinTTL:         15,
-		MaxTTL:         900,
-		VCPUs:          1,
-		MemSizeMB:      256,
+		Addr:             "0.0.0.0:8080",
+		Token:            os.Getenv("BORING_TOKEN"),
+		MaxMachines:      envInt("BORING_MAX", 20),
+		FirecrackerBin:   envStr("BORING_FIRECRACKER_BIN", "/opt/boring/bin/firecracker"),
+		KernelPath:       envStr("BORING_KERNEL", "/opt/boring/kernel/vmlinux"),
+		BaseRootfs:       envStr("BORING_ROOTFS", "/opt/boring/rootfs/rootfs.ext4"),
+		DesktopRootfs:    envStr("BORING_DESKTOP_ROOTFS", "/opt/boring/rootfs/desktop.ext4"),
+		TemplatesDir:     envStr("BORING_TEMPLATES", "/opt/boring/templates"),
+		RunDir:           envStr("BORING_RUN", "/opt/boring/run"),
+		DefaultTTL:       120,
+		MinTTL:           15,
+		MaxTTL:           900,
+		VCPUs:            1,
+		MemSizeMB:        256,
+		PerIPMax:         envInt("BORING_PER_IP_MAX", 2),
+		CreateRatePerMin: envInt("BORING_CREATE_RATE", 8),
+		TrustProxy:       os.Getenv("BORING_TRUST_PROXY") == "1",
+		CgroupEnable:     os.Getenv("BORING_CGROUP") != "0",
+		CPUMaxPercent:    envInt("BORING_CPU_MAX_PCT", 150),
+		PidsMax:          envInt("BORING_PIDS_MAX", 512),
 	}
 	if c.MaxMachines < 1 {
 		c.MaxMachines = 1

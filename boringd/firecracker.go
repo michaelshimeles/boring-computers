@@ -166,6 +166,14 @@ type fcDriver struct {
 // Console exposes the driver's console for the tty handler.
 func (d *fcDriver) Console() *Console { return d.console }
 
+// PID returns the firecracker child's process id (0 if not running).
+func (d *fcDriver) PID() int {
+	if d == nil || d.cmd == nil || d.cmd.Process == nil {
+		return 0
+	}
+	return d.cmd.Process.Pid
+}
+
 // bootMachine performs the full create flow: copy overlay, launch firecracker,
 // configure it over the API socket, start it (or restore a snapshot), and time
 // the boot up to the readiness marker. snapDir, if non-empty, points at a

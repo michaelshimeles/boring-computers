@@ -16,6 +16,7 @@ var (
 	ErrNotFound            = errors.New("machine not found")
 	ErrTooManyMachines     = errors.New("machine capacity reached")
 	ErrSnapshotUnavailable = errors.New("snapshot unavailable")
+	ErrRateLimited         = errors.New("rate limit exceeded for your address")
 )
 
 // Machine is a single running microVM plus the bookkeeping boringd needs to
@@ -30,6 +31,9 @@ type Machine struct {
 	Display   bool
 	CreatedAt time.Time
 	ExpiresAt time.Time
+
+	// creatorIP holds the limiter slot to release when the machine dies.
+	creatorIP string
 
 	// driver owns the firecracker child process, stdio console and API socket.
 	driver *fcDriver
@@ -67,15 +71,19 @@ func (m *Machine) View() machineView {
 // Manager is the thread-safe machine registry and lifecycle owner.
 type Manager struct {
 	cfg      Config
+	limiter  *Limiter
+	cgroups  *Cgroups
 	mu       sync.Mutex
 	machines map[string]*Machine
 	stopCh   chan struct{}
 }
 
-// NewManager constructs an empty Manager.
+// NewManager constructs an empty Manager with per-IP limiting and cgroup caps.
 func NewManager(cfg Config) *Manager {
 	return &Manager{
 		cfg:      cfg,
+		limiter:  NewLimiter(cfg.PerIPMax, cfg.CreateRatePerMin),
+		cgroups:  NewCgroups(cfg),
 		machines: make(map[string]*Machine),
 		stopCh:   make(chan struct{}),
 	}
@@ -140,13 +148,20 @@ func (mgr *Manager) List() []machineView {
 }
 
 // Create boots a new microVM from the given template with the (clamped) TTL.
-func (mgr *Manager) Create(template string, ttlSeconds int) (*Machine, error) {
+// creatorIP is used for per-IP rate/concurrency limiting on the public endpoint.
+func (mgr *Manager) Create(template string, ttlSeconds int, creatorIP string) (*Machine, error) {
 	ttl := mgr.cfg.ClampTTL(ttlSeconds)
+
+	// Per-IP rate + concurrency cap (released in teardown).
+	if err := mgr.limiter.Acquire(creatorIP); err != nil {
+		return nil, err
+	}
 
 	// Reserve a slot + id under the lock, but perform the (slow) boot outside it.
 	mgr.mu.Lock()
 	if len(mgr.machines) >= mgr.cfg.MaxMachines {
 		mgr.mu.Unlock()
+		mgr.limiter.Release(creatorIP)
 		return nil, ErrTooManyMachines
 	}
 	tpl := mgr.cfg.Template(template)
@@ -157,6 +172,7 @@ func (mgr *Manager) Create(template string, ttlSeconds int) (*Machine, error) {
 		Status:    "booting",
 		Template:  tpl.Name,
 		Display:   tpl.Display,
+		creatorIP: creatorIP,
 		CreatedAt: now,
 		ExpiresAt: now.Add(time.Duration(ttl) * time.Second),
 	}
@@ -176,12 +192,16 @@ func (mgr *Manager) Create(template string, ttlSeconds int) (*Machine, error) {
 
 	drv, mode, bootMS, err := bootMachine(mgr.cfg, id, tpl, snapDir)
 	if err != nil {
-		// Roll back the reservation.
+		// Roll back the reservation (and the per-IP slot).
 		mgr.mu.Lock()
 		delete(mgr.machines, id)
 		mgr.mu.Unlock()
+		mgr.limiter.Release(creatorIP)
 		return nil, err
 	}
+
+	// Cap the guest's host resources (CPU/memory/pids) before it can do much.
+	mgr.cgroups.Place(drv.PID(), id, tpl)
 
 	mgr.mu.Lock()
 	m.driver = drv
@@ -191,13 +211,13 @@ func (mgr *Manager) Create(template string, ttlSeconds int) (*Machine, error) {
 	m.timer = time.AfterFunc(time.Until(m.ExpiresAt), func() { mgr.reap(id) })
 	mgr.mu.Unlock()
 
-	log.Printf("machine %s created (mode=%s boot_ms=%d ttl=%ds)", id, mode, bootMS, ttl)
+	log.Printf("machine %s created (mode=%s boot_ms=%d ttl=%ds ip=%s)", id, mode, bootMS, ttl, creatorIP)
 	return m, nil
 }
 
 // Branch forks a new machine from the source machine's live snapshot. Best
 // effort: returns ErrSnapshotUnavailable (mapped to 501) if snapshotting fails.
-func (mgr *Manager) Branch(id string) (*Machine, error) {
+func (mgr *Manager) Branch(id, creatorIP string) (*Machine, error) {
 	mgr.mu.Lock()
 	src, ok := mgr.machines[id]
 	if !ok {
@@ -212,10 +232,19 @@ func (mgr *Manager) Branch(id string) (*Machine, error) {
 	newID := mgr.newID()
 	now := time.Now()
 	ttl := mgr.cfg.ClampTTL(int(time.Until(src.ExpiresAt).Seconds()))
+	mgr.mu.Unlock()
+
+	// A fork counts against the caller's per-IP budget (released in teardown).
+	if err := mgr.limiter.Acquire(creatorIP); err != nil {
+		return nil, err
+	}
+
+	mgr.mu.Lock()
 	child := &Machine{
 		ID:        newID,
 		Status:    "booting",
 		Template:  src.Template,
+		creatorIP: creatorIP,
 		CreatedAt: now,
 		ExpiresAt: now.Add(time.Duration(ttl) * time.Second),
 	}
@@ -241,6 +270,8 @@ func (mgr *Manager) Branch(id string) (*Machine, error) {
 		log.Printf("branch %s: restore failed: %v", id, err)
 		return nil, ErrSnapshotUnavailable
 	}
+
+	mgr.cgroups.Place(drv.PID(), newID, mgr.cfg.Template(src.Template))
 
 	mgr.mu.Lock()
 	child.driver = drv
@@ -307,6 +338,10 @@ func (mgr *Manager) teardown(m *Machine) {
 	}
 	if m.driver != nil {
 		m.driver.Close()
+	}
+	mgr.cgroups.Remove(m.ID)
+	if m.creatorIP != "" {
+		mgr.limiter.Release(m.creatorIP)
 	}
 }
 

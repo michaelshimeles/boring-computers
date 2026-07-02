@@ -98,9 +98,9 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		req.Template = "python"
 	}
 
-	m, err := s.mgr.Create(req.Template, req.TTLSeconds)
+	m, err := s.mgr.Create(req.Template, req.TTLSeconds, clientIP(r, s.cfg.TrustProxy))
 	if err != nil {
-		if errors.Is(err, ErrTooManyMachines) {
+		if errors.Is(err, ErrTooManyMachines) || errors.Is(err, ErrRateLimited) {
 			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": err.Error()})
 			return
 		}
@@ -137,12 +137,12 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBranch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	m, err := s.mgr.Branch(id)
+	m, err := s.mgr.Branch(id, clientIP(r, s.cfg.TrustProxy))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
-		case errors.Is(err, ErrTooManyMachines):
+		case errors.Is(err, ErrTooManyMachines), errors.Is(err, ErrRateLimited):
 			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": err.Error()})
 		case errors.Is(err, ErrSnapshotUnavailable):
 			writeJSON(w, http.StatusNotImplemented, map[string]any{"error": err.Error()})
