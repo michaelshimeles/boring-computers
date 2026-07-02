@@ -75,7 +75,9 @@
 			rfb.background = '#000';
 			rfb.viewOnly = true; // the AI drives; the human just watches
 			rfb.addEventListener('connect', () => {
-				if (!disposed) startAgent();
+				// x11vnc accepts before the apps finish painting; give X a moment so
+				// the agent's first screenshot shows the desktop, not a black frame.
+				if (!disposed) setTimeout(startAgent, 2500);
 			});
 			rfb.addEventListener('disconnect', () => {
 				if (disposed) return;
