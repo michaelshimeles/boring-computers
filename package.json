@@ -14,7 +14,8 @@
 		"lint": "turbo run lint",
 		"check": "turbo run check",
 		"format": "turbo run format",
-		"test": "turbo run test"
+		"test": "turbo run test",
+		"dev:demo": "bash infra/latitude/dev-demo.sh"
 	},
 	"devDependencies": {
 		"turbo": "^2.5.0"
