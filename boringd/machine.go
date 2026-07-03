@@ -149,7 +149,7 @@ func (mgr *Manager) List() []machineView {
 
 // Create boots a new microVM from the given template with the (clamped) TTL.
 // creatorIP is used for per-IP rate/concurrency limiting on the public endpoint.
-func (mgr *Manager) Create(template string, ttlSeconds int, creatorIP string) (*Machine, error) {
+func (mgr *Manager) Create(template string, ttlSeconds int, net bool, creatorIP string) (*Machine, error) {
 	ttl := mgr.cfg.ClampTTL(ttlSeconds)
 
 	// Per-IP rate + concurrency cap (released in teardown).
@@ -182,8 +182,9 @@ func (mgr *Manager) Create(template string, ttlSeconds int, creatorIP string) (*
 
 	// Use the template's prebuilt snapshot for a fast restore when eligible and
 	// present; bootMachine falls back to a cold boot if the restore fails.
+	// `net` forces a cold boot (the snapshot has no NIC) so the VM gets internet.
 	snapDir := ""
-	if tpl.Snapshot {
+	if tpl.Snapshot && !(net && mgr.cfg.NetEnable) {
 		cand := filepath.Join(mgr.cfg.TemplatesDir, tpl.Name)
 		if fileExists(filepath.Join(cand, "snapshot_file")) && fileExists(filepath.Join(cand, "mem_file")) {
 			snapDir = cand

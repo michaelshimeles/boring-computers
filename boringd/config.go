@@ -49,6 +49,11 @@ type Config struct {
 	CPUMaxPercent int // host CPU % cap per VM (e.g. 100 = 1 core)
 	PidsMax       int // max host-visible pids for the firecracker child
 
+	// Guest internet: attach a NIC per cold-booted VM, NAT out via the host. The
+	// host side (bridge, dnsmasq, egress firewall) is set up by net-setup.sh.
+	NetEnable bool   // BORING_NET=="1"
+	NetBridge string // bridge to attach taps to (default boring0)
+
 	// Computer-use agent: an AI driving the GUI desktop, streamed to the browser.
 	AnthropicKey       string // BORING_ANTHROPIC_KEY; empty disables the agent
 	AgentModel         string // model id (default claude-opus-4-8)
@@ -87,6 +92,8 @@ func LoadConfig() Config {
 		CgroupEnable:       os.Getenv("BORING_CGROUP") != "0",
 		CPUMaxPercent:      envInt("BORING_CPU_MAX_PCT", 150),
 		PidsMax:            envInt("BORING_PIDS_MAX", 512),
+		NetEnable:          os.Getenv("BORING_NET") == "1",
+		NetBridge:          envStr("BORING_NET_BRIDGE", "boring0"),
 		AnthropicKey:       os.Getenv("BORING_ANTHROPIC_KEY"),
 		AgentModel:         envStr("BORING_AGENT_MODEL", "claude-opus-4-8"),
 		AgentMaxSteps:      envInt("BORING_AGENT_MAX_STEPS", 12),

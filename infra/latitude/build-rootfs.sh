@@ -115,7 +115,7 @@ mount --bind    /dev   "${MNT}/dev"
 # Install python3. Use the host's chroot (Alpine's busybox provides /bin/sh).
 chroot "${MNT}" /bin/sh -eux <<'CHROOT_EOF'
 apk update
-apk add --no-cache python3 nodejs npm
+apk add --no-cache python3 py3-pip nodejs npm curl
 # Blank root password for demo convenience.
 passwd -d root || true
 # Ensure ttyS0 device node exists even if devtmpfs is late.

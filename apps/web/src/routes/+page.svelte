@@ -24,6 +24,7 @@
 		{ s: 900, l: '15 min' }
 	];
 	let ttl = $state(60);
+	let net = $state(false); // internet on the shell (cold-boots; pip/npm/web work)
 
 	const PRODUCTS = [
 		{
@@ -97,7 +98,7 @@
 		</h1>
 
 		{#if mode === 'shell'}
-			<Computer {ttl} onClose={() => (mode = null)} />
+			<Computer {ttl} {net} onClose={() => (mode = null)} />
 		{:else if mode === 'desktop'}
 			<Desktop {ttl} onClose={() => (mode = null)} />
 		{:else if mode === 'agent'}
@@ -135,6 +136,23 @@
 							{opt.l}
 						</button>
 					{/each}
+				</div>
+
+				<!-- internet -->
+				<div class="flex items-center gap-1 font-mono text-[11px]">
+					<span class="mr-1 text-ink-faint">internet</span>
+					<button
+						onclick={() => (net = false)}
+						class="rounded-full border px-2 py-0.5 transition-colors {!net
+							? 'border-white/30 text-ink'
+							: 'border-line text-ink-faint hover:text-ink-muted'}">off · instant</button
+					>
+					<button
+						onclick={() => (net = true)}
+						class="rounded-full border px-2 py-0.5 transition-colors {net
+							? 'border-white/30 text-ink'
+							: 'border-line text-ink-faint hover:text-ink-muted'}">on · pip · npm · web</button
+					>
 				</div>
 
 				<div class="flex items-center gap-4">

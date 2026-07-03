@@ -8,8 +8,9 @@
 	let {
 		onClose,
 		ttl = 60,
-		machineId
-	}: { onClose?: () => void; ttl?: number; machineId?: string } = $props();
+		machineId,
+		net = false
+	}: { onClose?: () => void; ttl?: number; machineId?: string; net?: boolean } = $props();
 
 	let phase = $state<Phase>('idle');
 	let machine = $state<Machine | null>(null);
@@ -38,7 +39,7 @@
 		phase = 'booting';
 		error = '';
 		try {
-			machine = machineId ? await getMachine(machineId) : await createMachine('python', ttl);
+			machine = machineId ? await getMachine(machineId) : await createMachine('python', ttl, net);
 			await openTerminal(machine!.id);
 			phase = 'live';
 			startCountdown();
@@ -93,7 +94,7 @@
 			if (!term) return;
 			term.reset();
 			term.write(
-				'\x1b[38;5;244mboring computers · ephemeral microVM · python3 + node ready\x1b[0m\r\n'
+				`\x1b[38;5;244mboring computers · ephemeral microVM · python3 + node ${net ? '· internet' : 'ready'}\x1b[0m\r\n`
 			);
 			if (ws?.readyState === WebSocket.OPEN) ws.send(enc.encode('\n'));
 		}, 450);

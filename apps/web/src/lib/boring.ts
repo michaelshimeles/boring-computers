@@ -24,19 +24,24 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * friendly message. Returns the parsed machine, or throws an Error whose message
  * is safe to show a visitor.
  */
-export async function createMachine(template: string, ttlSeconds: number): Promise<Machine> {
+export async function createMachine(
+	template: string,
+	ttlSeconds: number,
+	net = false
+): Promise<Machine> {
 	const attempts = 3;
 	let last = 'the datacenter is busy — try again in a moment';
 	for (let i = 0; i < attempts; i++) {
 		let res: Response | null = null;
 		try {
 			const ctrl = new AbortController();
-			const timer = setTimeout(() => ctrl.abort(), 12000);
+			// A connected machine cold-boots (~a few seconds), so allow longer.
+			const timer = setTimeout(() => ctrl.abort(), net ? 20000 : 12000);
 			try {
 				res = await fetch(`${apiBase}/v1/machines`, {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({ template, ttl_seconds: ttlSeconds }),
+					body: JSON.stringify({ template, ttl_seconds: ttlSeconds, net }),
 					signal: ctrl.signal
 				});
 			} finally {

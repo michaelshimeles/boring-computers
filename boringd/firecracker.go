@@ -161,6 +161,7 @@ type fcDriver struct {
 	sock     string
 	overlay  string
 	vsockUDS string // host path to the vsock UDS (set when template has a display)
+	tap      string // host tap device name (set when networking is enabled)
 	apiClt   *http.Client
 
 	// Jailer mode: firecracker runs chrooted + unprivileged. Paths handed to the
@@ -350,6 +351,10 @@ func bootMachine(cfg Config, id string, tpl Template, snapDir string) (*fcDriver
 // coldBoot configures and starts a fresh VM via the firecracker API.
 func (d *fcDriver) coldBoot() error {
 	bootArgs := "console=ttyS0 reboot=k panic=1 pci=off i8042.noaux i8042.nomux random.trust_cpu=on"
+	if d.cfg.NetEnable {
+		// Kernel-level DHCP brings eth0 up before init; dnsmasq hands out a lease.
+		bootArgs += " ip=dhcp"
+	}
 	if d.tpl.InitPath != "" {
 		bootArgs += " init=" + d.tpl.InitPath
 	}
@@ -379,6 +384,26 @@ func (d *fcDriver) coldBoot() error {
 		"mem_size_mib": mem,
 	}); err != nil {
 		return err
+	}
+	// Networking: a per-VM tap on the host bridge, NATed out. The tap is owned by
+	// the jailed uid so the (unprivileged) firecracker child can open it.
+	if d.cfg.NetEnable {
+		tap := tapName(d.id)
+		uid := 0
+		if d.jailed {
+			uid = d.cfg.JailerUID
+		}
+		if err := createTap(tap, uid, d.cfg.NetBridge); err != nil {
+			return err
+		}
+		d.tap = tap
+		if err := d.apiPut("/network-interfaces/eth0", map[string]any{
+			"iface_id":      "eth0",
+			"host_dev_name": tap,
+			"guest_mac":     guestMAC(d.id),
+		}); err != nil {
+			return err
+		}
 	}
 	// A vsock device gives the host a private channel to guest services (the
 	// desktop VNC server listens on guest vsock port 5900).
@@ -521,6 +546,7 @@ func (d *fcDriver) Close() {
 			_ = d.console.stdin.Close()
 		}
 	}
+	teardownTap(d.tap)
 	if d.jailed && d.chroot != "" {
 		// Remove the whole jail (root/ holds sock, overlay, kernel link, vsock).
 		_ = os.RemoveAll(filepath.Dir(d.chroot))
