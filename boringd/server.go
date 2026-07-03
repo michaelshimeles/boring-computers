@@ -11,17 +11,22 @@ import (
 
 // Server wires the HTTP mux, auth middleware and JSON handlers.
 type Server struct {
-	cfg Config
-	mgr *Manager
-	mux *http.ServeMux
+	cfg   Config
+	mgr   *Manager
+	mux   *http.ServeMux
+	infer *inferLimiter
 }
 
 // NewServer builds the router with all routes from the contract.
 func NewServer(cfg Config, mgr *Manager) *Server {
-	s := &Server{cfg: cfg, mgr: mgr, mux: http.NewServeMux()}
+	s := &Server{cfg: cfg, mgr: mgr, mux: http.NewServeMux(), infer: newInferLimiter(cfg.InferenceRatePerMin)}
 
 	// Open route: health check (never requires auth).
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+
+	// Inference gateway (OpenAI-compatible; keys are server-side, per-IP capped).
+	s.mux.Handle("POST /v1/chat/completions", s.auth(http.HandlerFunc(s.handleChatCompletions)))
+	s.mux.Handle("GET /v1/models", s.auth(http.HandlerFunc(s.handleModels)))
 
 	// Authenticated /v1 routes.
 	s.mux.Handle("POST /v1/machines", s.auth(http.HandlerFunc(s.handleCreate)))

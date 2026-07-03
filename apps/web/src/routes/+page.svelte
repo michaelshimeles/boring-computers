@@ -42,8 +42,12 @@
 			desc: 'An AI that sees the screen and drives the mouse & keyboard.',
 			live: true
 		},
-		{ name: 'Storage', desc: 'Persistent volumes that outlive the machine.', live: false },
-		{ name: 'Inference', desc: 'One endpoint for every model.', live: false }
+		{
+			name: 'Inference',
+			desc: 'One OpenAI-compatible endpoint for every model — Claude on Anthropic, the rest via OpenRouter.',
+			live: true
+		},
+		{ name: 'Storage', desc: 'Persistent volumes that outlive the machine.', live: false }
 	];
 
 	const HOW = [
@@ -187,18 +191,29 @@
 		<div
 			class="mt-6 grid gap-px overflow-hidden rounded-geist-lg border border-line bg-line sm:grid-cols-2 lg:grid-cols-3"
 		>
-			{#each PRODUCTS as p (p.name)}
-				<div class="flex flex-col bg-black p-6">
-					<div class="flex items-center gap-2">
-						<h3 class="text-[15px] font-semibold text-ink">{p.name}</h3>
-						{#if p.live}
-							<span class="font-mono text-[10px] text-success">● live</span>
-						{:else}
-							<span class="font-mono text-[10px] text-ink-faint">soon</span>
-						{/if}
-					</div>
-					<p class="mt-2 text-[13px] leading-relaxed text-ink-muted">{p.desc}</p>
+			{#snippet card(p: { name: string; desc: string; live: boolean })}
+				<div class="flex items-center gap-2">
+					<h3 class="text-[15px] font-semibold text-ink">{p.name}</h3>
+					{#if p.live}
+						<span class="font-mono text-[10px] text-success">● live</span>
+					{:else}
+						<span class="font-mono text-[10px] text-ink-faint">soon</span>
+					{/if}
 				</div>
+				<p class="mt-2 text-[13px] leading-relaxed text-ink-muted">{p.desc}</p>
+			{/snippet}
+			{#each PRODUCTS as p (p.name)}
+				{#if p.name === 'Inference'}
+					<a
+						href={resolve('/inference')}
+						class="flex flex-col bg-black p-6 transition-colors hover:bg-surface"
+						>{@render card(p)}<span class="mt-2 font-mono text-[11px] text-accent"
+							>open the playground →</span
+						></a
+					>
+				{:else}
+					<div class="flex flex-col bg-black p-6">{@render card(p)}</div>
+				{/if}
 			{/each}
 		</div>
 	</section>
