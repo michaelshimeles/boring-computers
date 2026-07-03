@@ -18,7 +18,7 @@ set -euo pipefail
 BORING_ROOT="/opt/boring"
 ROOTFS_DIR="${BORING_ROOT}/rootfs"
 IMG="${ROOTFS_DIR}/rootfs.ext4"
-IMG_SIZE_MB="${IMG_SIZE_MB:-512}"
+IMG_SIZE_MB="${IMG_SIZE_MB:-1280}"   # room for the Claude Code CLI
 
 ALPINE_MIRROR="https://dl-cdn.alpinelinux.org/alpine"
 ALPINE_BRANCH="${ALPINE_BRANCH:-v3.20}"     # 3.x series
@@ -115,7 +115,10 @@ mount --bind    /dev   "${MNT}/dev"
 # Install python3. Use the host's chroot (Alpine's busybox provides /bin/sh).
 chroot "${MNT}" /bin/sh -eux <<'CHROOT_EOF'
 apk update
-apk add --no-cache python3 py3-pip nodejs npm curl
+apk add --no-cache python3 py3-pip nodejs npm curl git
+# Claude Code CLI, preinstalled so `claude` is ready in every shell (users bring
+# their own ANTHROPIC_API_KEY). Best-effort: don't fail the whole image if npm hiccups.
+npm install -g @anthropic-ai/claude-code || true
 # Blank root password for demo convenience.
 passwd -d root || true
 # Ensure ttyS0 device node exists even if devtmpfs is late.
