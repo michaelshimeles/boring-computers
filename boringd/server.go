@@ -38,6 +38,10 @@ func NewServer(cfg Config, mgr *Manager) *Server {
 	s.mux.Handle("DELETE /v1/machines/{id}", s.auth(http.HandlerFunc(s.handleDelete)))
 	s.mux.Handle("POST /v1/machines/{id}/branch", s.auth(http.HandlerFunc(s.handleBranch)))
 
+	// File transfer over the guest serial console.
+	s.mux.Handle("POST /v1/machines/{id}/upload", s.auth(http.HandlerFunc(s.handleUpload)))
+	s.mux.Handle("GET /v1/machines/{id}/download", s.auth(http.HandlerFunc(s.handleDownload)))
+
 	// WebSocket TTY + VNC. Auth is handled inside (accepts ?token= too).
 	s.mux.HandleFunc("GET /v1/machines/{id}/tty", s.handleTTY)
 	s.mux.HandleFunc("GET /v1/machines/{id}/vnc", s.handleVNC)

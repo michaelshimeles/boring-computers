@@ -53,6 +53,63 @@
 		if (e.key === 'Enter') openPreview();
 	}
 
+	// File transfer: drag-drop to upload into /root, a path box to download.
+	let dragOver = $state(false);
+	let fileMsg = $state('');
+	let dlPath = $state('');
+
+	async function uploadFiles(files: FileList | File[]) {
+		if (!machine) return;
+		for (const f of Array.from(files)) {
+			fileMsg = `⤒ uploading ${f.name}…`;
+			try {
+				const res = await fetch(`${apiBase}/v1/machines/${machine.id}/upload`, {
+					method: 'POST',
+					headers: { 'X-Filename': f.name },
+					body: f
+				});
+				const j = await res.json().catch(() => ({}));
+				fileMsg = res.ok ? `⤒ ${f.name} → ${j.path}` : `⚠ ${j.error ?? 'upload failed'}`;
+			} catch {
+				fileMsg = '⚠ upload failed';
+			}
+		}
+		setTimeout(() => (fileMsg = ''), 5000);
+	}
+
+	async function downloadFile() {
+		const p = dlPath.trim();
+		if (!p || !machine) return;
+		fileMsg = `⤓ fetching ${p}…`;
+		try {
+			const res = await fetch(
+				`${apiBase}/v1/machines/${machine.id}/download?path=${encodeURIComponent(p)}`
+			);
+			if (!res.ok) {
+				const j = await res.json().catch(() => ({}));
+				fileMsg = `⚠ ${j.error ?? 'not found'}`;
+			} else {
+				const blob = await res.blob();
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement('a');
+				a.href = url;
+				a.download = p.split('/').pop() || 'file';
+				a.click();
+				URL.revokeObjectURL(url);
+				fileMsg = `⤓ downloaded ${a.download}`;
+			}
+		} catch {
+			fileMsg = '⚠ download failed';
+		}
+		setTimeout(() => (fileMsg = ''), 5000);
+	}
+
+	function onDrop(e: DragEvent) {
+		e.preventDefault();
+		dragOver = false;
+		if (e.dataTransfer?.files?.length) void uploadFiles(e.dataTransfer.files);
+	}
+
 	let countdown: ReturnType<typeof setInterval> | null = null;
 	let onResize: (() => void) | null = null;
 	let disposed = false;
@@ -288,7 +345,25 @@
 	}
 </script>
 
-<div class="flex h-full flex-col bg-black font-mono text-[12px]">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="relative flex h-full flex-col bg-black font-mono text-[12px]"
+	ondragover={(e) => {
+		if (phase === 'live') {
+			e.preventDefault();
+			dragOver = true;
+		}
+	}}
+	ondragleave={() => (dragOver = false)}
+	ondrop={onDrop}
+>
+	{#if dragOver}
+		<div
+			class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center border-2 border-dashed border-accent/70 bg-black/70 text-[13px] text-ink"
+		>
+			drop to upload into /root
+		</div>
+	{/if}
 	<!-- status + tabs -->
 	<div class="flex items-center justify-between border-b border-line/70 px-3 py-1.5">
 		<div class="flex min-w-0 items-center gap-2 text-ink-muted">
@@ -360,6 +435,24 @@
 			</div>
 		{/if}
 	</div>
+
+	<!-- file bar: drag-drop upload feedback + download -->
+	{#if phase === 'live'}
+		<div class="flex items-center gap-2 border-t border-line/70 bg-black px-3 py-1 text-[11px]">
+			<span class="min-w-0 flex-1 truncate {fileMsg ? 'text-ink-muted' : 'text-ink-faint'}">
+				{fileMsg || 'drag a file in to upload it to /root'}
+			</span>
+			<input
+				bind:value={dlPath}
+				onkeydown={(e) => e.key === 'Enter' && downloadFile()}
+				placeholder="/root/result.txt"
+				class="w-40 rounded-[4px] border border-line bg-black px-1.5 py-0.5 text-ink placeholder:text-ink-faint focus:border-white/25 focus:outline-none"
+			/>
+			<button class="text-ink-subtle transition-colors hover:text-ink" onclick={downloadFile}
+				>download ↓</button
+			>
+		</div>
+	{/if}
 
 	<!-- AI prompt box -->
 	<div class="border-t border-line/70 bg-surface px-3 py-2">

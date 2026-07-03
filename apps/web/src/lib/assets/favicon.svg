@@ -1,13 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
 	<title>boring computers</title>
-	<rect width="32" height="32" fill="#000000" />
-	<text
-		x="16"
-		y="22"
-		text-anchor="middle"
-		font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
-		font-size="16"
-		font-weight="600"
-		fill="#ffffff"
-	>b</text>
+	<!-- the boring. classic: a tiny beige retro computer on black -->
+	<rect width="32" height="32" rx="6" fill="#000000" />
+	<!-- pedestal -->
+	<rect x="8" y="25" width="16" height="3" rx="1.5" fill="#c4beac" />
+	<!-- case -->
+	<rect x="4.5" y="4" width="23" height="21" rx="3.5" fill="#d9d3c3" />
+	<!-- screen bezel -->
+	<rect x="7.5" y="7" width="17" height="12" rx="2" fill="#c7c1b0" />
+	<!-- screen -->
+	<rect x="9" y="8.5" width="14" height="9" rx="1.5" fill="#0a0a0a" />
+	<!-- cursor -->
+	<rect x="11" y="10.5" width="2" height="3" fill="#8f8f8f" />
+	<!-- floppy slit -->
+	<rect x="12" y="21" width="9" height="1.6" rx="0.8" fill="#26241f" />
+	<!-- power led -->
+	<circle cx="24" cy="21.8" r="1" fill="#00ca50" />
 </svg>
