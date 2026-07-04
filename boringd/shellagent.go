@@ -3,13 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -59,46 +56,11 @@ func (s *Server) runShellAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
+	guard := s.setupAgentGuard(w, r)
+	if guard == nil {
 		return
 	}
-	defer conn.Close()
-	send := func(typ, text string) { _ = conn.WriteJSON(map[string]string{"type": typ, "text": text}) }
-
-	if s.cfg.AnthropicKey == "" {
-		send("error", "the agent isn't configured on this server")
-		return
-	}
-	if n := atomic.AddInt32(&agentRuns, 1); int(n) > s.cfg.AgentMaxConcurrent {
-		atomic.AddInt32(&agentRuns, -1)
-		send("error", "too many agents are running right now — try again in a moment")
-		return
-	}
-	defer atomic.AddInt32(&agentRuns, -1)
-
-	if !s.agentBudget.allow() {
-		send("error", "the daily AI limit has been reached — please try again tomorrow")
-		return
-	}
-
-	stop := make(chan struct{})
-	go func() {
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				close(stop)
-				return
-			}
-		}
-	}()
-	stopped := func() bool {
-		select {
-		case <-stop:
-			return true
-		default:
-			return false
-		}
-	}
+	defer guard.close()
 
 	_, sub := console.Subscribe()
 	defer console.Unsubscribe(sub)
@@ -119,14 +81,21 @@ func (s *Server) runShellAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	messages := []json.RawMessage{userTextMessage("Your task: " + goal)}
 
-	send("say", "On it — let me get to work in the terminal.")
+	guard.send("say", "On it — let me get to work in the terminal.")
 	for step := 0; step < s.cfg.AgentMaxSteps; step++ {
-		if stopped() {
+		if guard.stopped() {
 			return
 		}
-		resp, err := callAnthropicShell(s.cfg, tool, messages)
+		resp, err := callAnthropicAPI(s.cfg, anthropicRequest{
+			Model:     s.cfg.AgentModel,
+			MaxTokens: 4096,
+			System:    shellAgentSystem,
+			Tools:     []any{tool},
+			Messages:  messages,
+			Effort:    "low",
+		})
 		if err != nil {
-			send("error", err.Error())
+			guard.send("error", err.Error())
 			return
 		}
 		messages = append(messages, assistantMessage(resp.Content))
@@ -140,17 +109,15 @@ func (s *Server) runShellAgent(w http.ResponseWriter, r *http.Request) {
 			switch b.Type {
 			case "text":
 				if t := strings.TrimSpace(b.Text); t != "" {
-					send("say", t)
-					// The agent reports the port it served on → hand back the port so
-					// the frontend builds a live (path-based) preview link.
+					guard.send("say", t)
 					if m := portRe.FindStringSubmatch(b.Text); m != nil {
 						if port, _ := strconv.Atoi(m[1]); port > 0 && port < 65536 {
-							send("preview", m[1])
+							guard.send("preview", m[1])
 						}
 					}
 				}
 			case "tool_use":
-				if stopped() {
+				if guard.stopped() {
 					return
 				}
 				cmd, _ := b.Input["command"].(string)
@@ -159,18 +126,18 @@ func (s *Server) runShellAgent(w http.ResponseWriter, r *http.Request) {
 					results = append(results, textToolResult(b.ID, "(empty command)", true))
 					continue
 				}
-				send("action", "$ "+cmd)
+				guard.send("action", "$ "+cmd)
 				out := runGuestCommand(console, sub, cmd, 30*time.Second)
 				results = append(results, textToolResult(b.ID, out, false))
 			}
 		}
 		if len(results) == 0 {
-			send("done", "")
+			guard.send("done", "")
 			return
 		}
 		messages = append(messages, userToolResults(results))
 	}
-	send("done", "reached the step limit")
+	guard.send("done", "reached the step limit")
 }
 
 // writeConsoleChunked writes to the guest serial in small pieces with brief
@@ -270,44 +237,6 @@ func finalizeOutput(raw, cmd string) string {
 	return s
 }
 
-func callAnthropicShell(cfg Config, tool map[string]any, messages []json.RawMessage) (*apiResp, error) {
-	body := map[string]any{
-		"model":         cfg.AgentModel,
-		"max_tokens":    4096, // room to write a whole file in one command
-		"system":        shellAgentSystem,
-		"tools":         []any{tool},
-		"messages":      messages,
-		"output_config": map[string]any{"effort": "low"},
-	}
-	buf, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(buf))
-	req.Header.Set("content-type", "application/json")
-	req.Header.Set("x-api-key", cfg.AnthropicKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	res, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("the AI is unreachable right now")
-	}
-	defer res.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	if res.StatusCode != http.StatusOK {
-		var e struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		json.Unmarshal(data, &e)
-		if e.Error.Message != "" {
-			return nil, fmt.Errorf("model error: %s", e.Error.Message)
-		}
-		return nil, fmt.Errorf("model http %d", res.StatusCode)
-	}
-	var out apiResp
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("bad model response")
-	}
-	return &out, nil
-}
 
 func userTextMessage(text string) json.RawMessage {
 	b, _ := json.Marshal(map[string]any{"role": "user", "content": text})

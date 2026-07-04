@@ -3,7 +3,6 @@
 	import { onMount } from 'svelte';
 	import {
 		apiBase,
-		wsUrl,
 		createMachine,
 		getMachine,
 		branchMachine,
@@ -12,6 +11,11 @@
 		previewUrl,
 		type Machine
 	} from '$lib/boring';
+	import { createCountdown } from '$lib/countdown';
+	import { copyMachineUrl } from '$lib/clipboard';
+	import { setupTerminal, type TerminalHandle } from '$lib/terminal';
+	import { connectVnc, type VncHandle } from '$lib/vnc';
+	import { connectAgent } from '$lib/agent-ws';
 
 	// One computer, everything on it: a live desktop (browser + GUI over VNC), its
 	// serial shell as a real terminal (coding agents preinstalled), and a prompt
@@ -35,17 +39,12 @@
 
 	// VNC desktop
 	let screen = $state<HTMLDivElement>();
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	let rfb: any = null;
+	let vncHandle: VncHandle | null = null;
 	let attempts = 0;
 
 	// Serial terminal
 	let termHost = $state<HTMLDivElement>();
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	let term: any = null;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	let fit: any = null;
-	let tty: WebSocket | null = null;
+	let termHandle: TerminalHandle | null = null;
 
 	// AI prompt box (drives the computer-use agent on this machine)
 	let goal = $state('');
@@ -161,10 +160,9 @@
 		}
 	}
 
-	let countdown: ReturnType<typeof setInterval> | null = null;
-	let onResize: (() => void) | null = null;
 	let disposed = false;
 	const MAX_ATTEMPTS = 10;
+	const timer = createCountdown(ttl, (r) => (remaining = r));
 
 	onMount(() => {
 		void launch();
@@ -179,12 +177,10 @@
 				? await getMachine(machineId)
 				: await createMachine('desktop', ttl, false, volume);
 			phase = 'connecting';
-			startCountdown();
-			void openTerminal(machine.id); // the serial shell is up early
-			// A reconnect or a warm-pool desktop is already painted → connect fast;
-			// a fresh cold boot needs a few seconds for X + chromium to paint.
+			timer.start(machine);
+			void openTerminal(machine.id);
 			const painted = machineId || machine.mode === 'warm';
-			setTimeout(connectVNC, painted ? 400 : 4500);
+			setTimeout(doConnectVNC, painted ? 400 : 4500);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			phase = 'error';
@@ -192,105 +188,53 @@
 	}
 
 	// --- desktop (noVNC) ---
-	function teardownRfb() {
-		try {
-			rfb?.disconnect();
-		} catch {
-			/* ignore */
-		}
-		rfb = null;
-		// eslint-disable-next-line svelte/no-dom-manipulating
-		if (screen) screen.innerHTML = '';
-	}
-
-	async function connectVNC() {
+	async function doConnectVNC() {
 		if (disposed || !machine || !screen) return;
 		attempts += 1;
-		const { default: RFB } = await import('@novnc/novnc');
-		if (disposed) return;
-		teardownRfb();
 		try {
-			rfb = new RFB(screen, wsUrl(`/v1/machines/${machine.id}/vnc`), {});
-			rfb.scaleViewport = true;
-			rfb.resizeSession = false;
-			rfb.background = '#000';
-			// The guest CPU is the bottleneck, not bandwidth: low zlib compression
-			// means fast per-frame encoding (snappier), decent JPEG quality keeps
-			// text readable. Tight encoding is negotiated with x11vnc automatically.
-			rfb.qualityLevel = 7;
-			rfb.compressionLevel = 1;
-			rfb.addEventListener('connect', () => {
-				if (!disposed) phase = 'live';
-			});
-			rfb.addEventListener('disconnect', () => {
-				if (disposed) return;
-				if (phase !== 'live' && attempts < MAX_ATTEMPTS) setTimeout(connectVNC, 1500);
-				else if (phase === 'live') {
-					phase = 'closed';
-					stopCountdown();
-				}
-			});
+			vncHandle = await connectVnc(
+				{
+					screen,
+					machineId: machine.id,
+					qualityLevel: 7,
+					compressionLevel: 1,
+					onConnect: () => {
+						if (!disposed) phase = 'live';
+					},
+					onDisconnect: () => {
+						if (disposed) return;
+						if (phase !== 'live' && attempts < MAX_ATTEMPTS) setTimeout(doConnectVNC, 1500);
+						else if (phase === 'live') {
+							phase = 'closed';
+							timer.stop();
+						}
+					}
+				},
+				() => disposed
+			);
 		} catch {
-			if (attempts < MAX_ATTEMPTS) setTimeout(connectVNC, 1500);
+			if (attempts < MAX_ATTEMPTS) setTimeout(doConnectVNC, 1500);
 		}
 	}
 
 	// --- terminal (xterm over the guest serial) ---
 	async function openTerminal(id: string) {
-		const { Terminal } = await import('@xterm/xterm');
-		const { FitAddon } = await import('@xterm/addon-fit');
-		term = new Terminal({
-			fontFamily: "'Geist Mono', ui-monospace, monospace",
+		termHandle = await setupTerminal({
+			host: termHost!,
+			machineId: id,
 			fontSize: 12,
-			cursorBlink: true,
-			theme: { background: '#0a0a0a', foreground: '#ededed', cursor: '#ededed', green: '#00ca50' }
-		});
-		fit = new FitAddon();
-		term.loadAddon(fit);
-		term.open(termHost!);
-		fit.fit();
-		onResize = () => fit?.fit();
-		window.addEventListener('resize', onResize);
-
-		tty = new WebSocket(wsUrl(`/v1/machines/${id}/tty`));
-		tty.binaryType = 'arraybuffer';
-		const enc = new TextEncoder();
-		tty.onmessage = (e) => {
-			if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data));
-			else term.write(e.data);
-		};
-		term.onData((d: string) => tty?.readyState === WebSocket.OPEN && tty.send(enc.encode(d)));
-		// Copy the selection with Cmd+C / Ctrl+Shift+C; bare Ctrl+C stays SIGINT.
-		term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-			if (
-				e.type === 'keydown' &&
-				e.key.toLowerCase() === 'c' &&
-				(e.metaKey || (e.ctrlKey && e.shiftKey))
-			) {
-				const sel = term.getSelection();
-				if (sel) {
-					void navigator.clipboard?.writeText(sel).catch(() => {});
-					return false;
-				}
-			}
-			return true;
-		});
-		setTimeout(() => {
-			if (!term) return;
-			term.reset();
-			term.write(
+			theme: { background: '#0a0a0a', foreground: '#ededed', cursor: '#ededed', green: '#00ca50' },
+			bannerText:
 				'\x1b[38;5;244mboring computers · desktop shell · node · claude · codex · cursor · pi\r\n' +
-					'run a server (e.g. python3 -m http.server 8000) then use "preview ↗" up top to open it\x1b[0m\r\n'
-			);
-			if (tty?.readyState === WebSocket.OPEN) tty.send(enc.encode('\n'));
-		}, 500);
+				'run a server (e.g. python3 -m http.server 8000) then use "preview ↗" up top to open it\x1b[0m\r\n'
+		});
 	}
 
 	function showTerminal() {
 		tab = 'terminal';
 		setTimeout(() => {
-			fit?.fit();
-			term?.focus();
+			termHandle?.fit?.fit();
+			termHandle?.term?.focus();
 		}, 40);
 	}
 
@@ -311,40 +255,32 @@
 			showTerminal();
 		} else {
 			tab = 'desktop';
-			if (rfb) rfb.viewOnly = true; // the AI drives; you watch
+			if (vncHandle?.rfb) vncHandle.rfb.viewOnly = true;
 		}
 		const path = build
 			? `/v1/machines/${machine.id}/shell-agent?goal=${encodeURIComponent(g)}`
 			: `/v1/machines/${machine.id}/agent?goal=${encodeURIComponent(g)}`;
-		const w = new WebSocket(wsUrl(path));
-		agentWs = w;
 		const finish = () => {
 			agentRunning = false;
-			if (!build && rfb) rfb.viewOnly = false;
+			if (!build && vncHandle?.rfb) vncHandle.rfb.viewOnly = false;
 		};
-		w.onmessage = (e) => {
-			let m: { type: string; text?: string };
-			try {
-				m = JSON.parse(e.data);
-			} catch {
-				return;
-			}
-			if (m.type === 'preview') {
-				const port = parseInt(m.text ?? '', 10);
+		agentWs = connectAgent(machine.id, path, {
+			onPreview: (text) => {
+				const port = parseInt(text, 10);
 				if (machine && Number.isInteger(port)) previewLink = previewUrl(machine.id, port);
-			} else if (m.type === 'done') {
-				agentLine = m.text || 'done ✓';
+			},
+			onDone: (text) => {
+				agentLine = text || 'done ✓';
 				finish();
-				w.close();
-			} else if (m.type === 'error') {
-				agentLine = '⚠ ' + (m.text ?? 'something went wrong');
+			},
+			onError: (text) => {
+				agentLine = '⚠ ' + (text || 'something went wrong');
 				finish();
-				w.close();
-			} else if ((m.type === 'say' || m.type === 'action') && m.text) {
-				agentLine = m.text;
-			}
-		};
-		w.onclose = finish;
+			},
+			onSay: (text) => (agentLine = text),
+			onAction: (text) => (agentLine = text),
+			onClose: finish
+		});
 	}
 
 	function promptKey(e: KeyboardEvent) {
@@ -356,55 +292,29 @@
 	}
 
 	// --- lifecycle ---
-	function startCountdown() {
-		remaining = machine?.expires_at
-			? Math.max(0, Math.round((new Date(machine.expires_at).getTime() - Date.now()) / 1000))
-			: ttl;
-		countdown = setInterval(() => {
-			remaining -= 1;
-			if (remaining <= 0) stopCountdown();
-		}, 1000);
-	}
-	function stopCountdown() {
-		if (countdown) clearInterval(countdown);
-		countdown = null;
-	}
-
 	async function copyShare() {
 		if (!machine) return;
-		try {
-			await navigator.clipboard.writeText(`${location.origin}/c/${machine.id}`);
-		} catch {
-			/* ignore */
+		const ok = await copyMachineUrl(machine.id);
+		if (ok) {
+			shared = true;
+			copied = true;
+			setTimeout(() => (copied = false), 1600);
 		}
-		shared = true;
-		copied = true;
-		setTimeout(() => (copied = false), 1600);
 	}
 
 	export function close() {
 		disposed = true;
-		stopCountdown();
-		if (onResize) window.removeEventListener('resize', onResize);
-		onResize = null;
-		for (const s of [tty, agentWs]) {
-			try {
-				s?.close();
-			} catch {
-				/* ignore */
-			}
-		}
-		tty = null;
-		agentWs = null;
+		timer.stop();
 		try {
-			rfb?.disconnect();
+			agentWs?.close();
 		} catch {
 			/* ignore */
 		}
-		rfb = null;
-		term?.dispose();
-		term = null;
-		fit = null;
+		agentWs = null;
+		vncHandle?.teardown();
+		vncHandle = null;
+		termHandle?.cleanup();
+		termHandle = null;
 		if (machine && !shared && !machineId) {
 			void fetch(`${apiBase}/v1/machines/${machine.id}`, { method: 'DELETE' }).catch(() => {});
 		}

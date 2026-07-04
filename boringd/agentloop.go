@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -27,6 +25,8 @@ Work efficiently — you have a limited number of steps. When the task is done, 
 
 // agentRuns counts in-flight agent loops (a cost guard alongside the step cap).
 var agentRuns int32
+
+func agentRunsAdd(delta int32) int32 { return atomic.AddInt32(&agentRuns, delta) }
 
 func (s *Server) runAgent(w http.ResponseWriter, r *http.Request) {
 	if !s.authorized(r) {
@@ -60,54 +60,16 @@ func (s *Server) runAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
+	guard := s.setupAgentGuard(w, r)
+	if guard == nil {
 		return
 	}
-	defer conn.Close()
-	send := func(typ, text string) {
-		_ = conn.WriteJSON(map[string]string{"type": typ, "text": text})
-	}
+	defer guard.close()
 
-	if s.cfg.AnthropicKey == "" {
-		send("error", "the agent isn't configured on this server")
-		return
-	}
-	if n := atomic.AddInt32(&agentRuns, 1); int(n) > s.cfg.AgentMaxConcurrent {
-		atomic.AddInt32(&agentRuns, -1)
-		send("error", "too many agents are running right now — try again in a moment")
-		return
-	}
-	defer atomic.AddInt32(&agentRuns, -1)
-
-	if !s.agentBudget.allow() {
-		send("error", "the daily AI limit has been reached — please try again tomorrow")
-		return
-	}
-
-	// Detect the browser closing the socket (stop button / navigation away).
-	stop := make(chan struct{})
-	go func() {
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				close(stop)
-				return
-			}
-		}
-	}()
-	stopped := func() bool {
-		select {
-		case <-stop:
-			return true
-		default:
-			return false
-		}
-	}
-
-	send("say", "Taking a look at the screen…")
+	guard.send("say", "Taking a look at the screen…")
 	shot, err := cli.Screenshot()
 	if err != nil {
-		send("error", "couldn't read the screen: "+err.Error())
+		guard.send("error", "couldn't read the screen: "+err.Error())
 		return
 	}
 
@@ -121,12 +83,20 @@ func (s *Server) runAgent(w http.ResponseWriter, r *http.Request) {
 	messages := []json.RawMessage{userGoalMessage(goal, shot)}
 
 	for step := 0; step < s.cfg.AgentMaxSteps; step++ {
-		if stopped() {
+		if guard.stopped() {
 			return
 		}
-		resp, err := callAnthropic(s.cfg, tool, messages)
+		resp, err := callAnthropicAPI(s.cfg, anthropicRequest{
+			Model:      s.cfg.AgentModel,
+			MaxTokens:  2048,
+			System:     agentSystemPrompt,
+			Tools:      []any{tool},
+			Messages:   messages,
+			Effort:     "medium",
+			BetaHeader: "computer-use-2025-11-24",
+		})
 		if err != nil {
-			send("error", err.Error())
+			guard.send("error", err.Error())
 			return
 		}
 		messages = append(messages, assistantMessage(resp.Content))
@@ -140,24 +110,24 @@ func (s *Server) runAgent(w http.ResponseWriter, r *http.Request) {
 			switch b.Type {
 			case "text":
 				if t := strings.TrimSpace(b.Text); t != "" {
-					send("say", t)
+					guard.send("say", t)
 				}
 			case "tool_use":
-				if stopped() {
+				if guard.stopped() {
 					return
 				}
-				send("action", describeAction(b.Input))
+				guard.send("action", describeAction(b.Input))
 				out, errText := executeAction(cli, b.Input)
 				results = append(results, toolResult(b.ID, out, errText))
 			}
 		}
 		if len(results) == 0 {
-			send("done", "")
+			guard.send("done", "")
 			return
 		}
 		messages = append(messages, userToolResults(results))
 	}
-	send("done", "reached the step limit")
+	guard.send("done", "reached the step limit")
 }
 
 // executeAction performs a computer-use action and returns a fresh screenshot
@@ -298,49 +268,6 @@ type blockHead struct {
 	Input map[string]any `json:"input"`
 }
 
-func callAnthropic(cfg Config, tool map[string]any, messages []json.RawMessage) (*apiResp, error) {
-	body := map[string]any{
-		"model":         cfg.AgentModel,
-		"max_tokens":    2048,
-		"system":        agentSystemPrompt,
-		"tools":         []any{tool},
-		"messages":      messages,
-		"output_config": map[string]any{"effort": "medium"},
-	}
-	buf, _ := json.Marshal(body)
-	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(buf))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("content-type", "application/json")
-	req.Header.Set("x-api-key", cfg.AnthropicKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("anthropic-beta", "computer-use-2025-11-24")
-
-	res, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("the AI is unreachable right now")
-	}
-	defer res.Body.Close()
-	data, _ := io.ReadAll(res.Body)
-	if res.StatusCode != http.StatusOK {
-		var e struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		json.Unmarshal(data, &e)
-		if e.Error.Message != "" {
-			return nil, fmt.Errorf("model error: %s", e.Error.Message)
-		}
-		return nil, fmt.Errorf("model http %d", res.StatusCode)
-	}
-	var out apiResp
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("bad model response")
-	}
-	return &out, nil
-}
 
 func imageBlock(png []byte) map[string]any {
 	return map[string]any{

@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { apiBase, wsUrl, createMachine, getMachine, type Machine } from '$lib/boring';
+	import { apiBase, createMachine, getMachine, type Machine } from '$lib/boring';
+	import { createCountdown } from '$lib/countdown';
+	import { copyMachineUrl } from '$lib/clipboard';
+	import { connectVnc, type VncHandle } from '$lib/vnc';
 
 	type Phase = 'idle' | 'booting' | 'connecting' | 'live' | 'closed' | 'error';
 
@@ -18,13 +21,12 @@
 	let copied = $state(false);
 
 	let screen: HTMLDivElement;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	let rfb: any = null;
-	let countdown: ReturnType<typeof setInterval> | null = null;
+	let vncHandle: VncHandle | null = null;
 	let attempts = 0;
 	let disposed = false;
 
 	const MAX_ATTEMPTS = 10;
+	const timer = createCountdown(ttl, (r) => (remaining = r));
 
 	onMount(() => {
 		void launch();
@@ -37,10 +39,7 @@
 		try {
 			machine = machineId ? await getMachine(machineId) : await createMachine('desktop', ttl);
 			phase = 'connecting';
-			startCountdown();
-			// The desktop cold-boots X and paints its apps over a few seconds; wait
-			// so noVNC's first full frame has the desktop on it. A reconnect is
-			// already painted, so connect quickly.
+			timer.start(machine);
 			setTimeout(connect, machineId ? 300 : 4500);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -48,45 +47,26 @@
 		}
 	}
 
-	function teardownRfb() {
-		try {
-			rfb?.disconnect();
-		} catch {
-			/* ignore */
-		}
-		rfb = null;
-		// noVNC (not Svelte) injects its canvas into this host node; clear its
-		// leftovers so retries don't stack an early black canvas over the live one.
-		// eslint-disable-next-line svelte/no-dom-manipulating
-		if (screen) screen.innerHTML = '';
-	}
-
 	async function connect() {
 		if (disposed || !machine) return;
 		attempts += 1;
-		const { default: RFB } = await import('@novnc/novnc');
-		if (disposed) return;
-		teardownRfb();
-		const url = wsUrl(`/v1/machines/${machine.id}/vnc`);
 		try {
-			rfb = new RFB(screen, url, {});
-			rfb.scaleViewport = true;
-			rfb.resizeSession = false;
-			rfb.background = '#000';
-			rfb.addEventListener('connect', () => {
-				if (disposed) return;
-				phase = 'live';
-			});
-			rfb.addEventListener('disconnect', () => {
-				if (disposed) return;
-				// Early disconnect => x11vnc not ready yet; retry a few times.
-				if (phase !== 'live' && attempts < MAX_ATTEMPTS) {
-					setTimeout(connect, 1500);
-				} else if (phase === 'live') {
-					phase = 'closed';
-					stopCountdown();
-				}
-			});
+			vncHandle = await connectVnc(
+				{
+					screen,
+					machineId: machine.id,
+					onConnect: () => (phase = 'live'),
+					onDisconnect: () => {
+						if (phase !== 'live' && attempts < MAX_ATTEMPTS) {
+							setTimeout(connect, 1500);
+						} else if (phase === 'live') {
+							phase = 'closed';
+							timer.stop();
+						}
+					}
+				},
+				() => disposed
+			);
 		} catch (e) {
 			if (attempts < MAX_ATTEMPTS) setTimeout(connect, 1500);
 			else {
@@ -96,41 +76,21 @@
 		}
 	}
 
-	function startCountdown() {
-		remaining = machine?.expires_at
-			? Math.max(0, Math.round((new Date(machine.expires_at).getTime() - Date.now()) / 1000))
-			: ttl;
-		countdown = setInterval(() => {
-			remaining -= 1;
-			if (remaining <= 0) stopCountdown();
-		}, 1000);
-	}
-	function stopCountdown() {
-		if (countdown) clearInterval(countdown);
-		countdown = null;
-	}
-
 	async function copyShare() {
 		if (!machine) return;
-		try {
-			await navigator.clipboard.writeText(`${location.origin}/c/${machine.id}`);
-		} catch {
-			/* ignore */
+		const ok = await copyMachineUrl(machine.id);
+		if (ok) {
+			shared = true;
+			copied = true;
+			setTimeout(() => (copied = false), 1600);
 		}
-		shared = true; // keep the machine alive for its TTL even if this tab closes
-		copied = true;
-		setTimeout(() => (copied = false), 1600);
 	}
 
 	export function close() {
 		disposed = true;
-		stopCountdown();
-		try {
-			rfb?.disconnect();
-		} catch {
-			/* ignore */
-		}
-		rfb = null;
+		timer.stop();
+		vncHandle?.teardown();
+		vncHandle = null;
 		if (machine && !shared && !machineId) {
 			void fetch(`${apiBase}/v1/machines/${machine.id}`, { method: 'DELETE' }).catch(() => {});
 		}

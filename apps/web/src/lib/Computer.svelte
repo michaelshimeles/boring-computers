@@ -1,7 +1,11 @@
 <script lang="ts">
 	import '@xterm/xterm/css/xterm.css';
 	import { onMount } from 'svelte';
-	import { apiBase, wsUrl, createMachine, getMachine, type Machine } from '$lib/boring';
+	import { apiBase, createMachine, getMachine, type Machine } from '$lib/boring';
+	import { createCountdown } from '$lib/countdown';
+	import { copyMachineUrl } from '$lib/clipboard';
+	import { setupTerminal, type TerminalHandle } from '$lib/terminal';
+	import { connectAgent } from '$lib/agent-ws';
 
 	type Phase = 'idle' | 'booting' | 'live' | 'closed' | 'error';
 
@@ -23,16 +27,12 @@
 	let agentGoal = $state('');
 	let agentRunning = $state(false);
 	let agentLine = $state('');
-	let agentWs: WebSocket | null = null;
 
 	let host = $state<HTMLDivElement>();
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	let term: any = null;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	let fit: any = null;
-	let ws: WebSocket | null = null;
-	let countdown: ReturnType<typeof setInterval> | null = null;
-	let onResize: (() => void) | null = null;
+	let termHandle: TerminalHandle | null = null;
+	let agentWs: WebSocket | null = null;
+
+	const timer = createCountdown(ttl, (r) => (remaining = r));
 
 	// The component only mounts once the user has asked for a computer, so boot
 	// immediately (bind:this on the parent isn't populated until after mount).
@@ -46,110 +46,34 @@
 		error = '';
 		try {
 			machine = machineId ? await getMachine(machineId) : await createMachine('python', ttl, net);
-			await openTerminal(machine!.id);
+			termHandle = await setupTerminal({
+				host: host!,
+				machineId: machine!.id,
+				bannerText: `\x1b[38;5;244mboring computers · ephemeral microVM · python3 + node ${net ? '· internet' : 'ready'}\x1b[0m\r\n`,
+				onClose: () => {
+					if (phase === 'live') {
+						termHandle?.term?.write('\r\n\x1b[38;5;244m— computer stopped —\x1b[0m\r\n');
+						phase = 'closed';
+						timer.stop();
+					}
+				}
+			});
 			phase = 'live';
-			startCountdown();
+			timer.start(machine);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			phase = 'error';
 		}
 	}
 
-	async function openTerminal(id: string) {
-		const { Terminal } = await import('@xterm/xterm');
-		const { FitAddon } = await import('@xterm/addon-fit');
-		term = new Terminal({
-			fontFamily: "'Geist Mono', ui-monospace, monospace",
-			fontSize: 13,
-			cursorBlink: true,
-			theme: {
-				background: '#0a0a0a',
-				foreground: '#ededed',
-				cursor: '#ededed',
-				selectionBackground: '#003674',
-				black: '#000000',
-				green: '#00ca50',
-				brightBlack: '#7d7d7d',
-				white: '#ededed'
-			}
-		});
-		fit = new FitAddon();
-		term.loadAddon(fit);
-		term.open(host!);
-		fit.fit();
-		onResize = () => fit?.fit();
-		window.addEventListener('resize', onResize);
-
-		ws = new WebSocket(wsUrl(`/v1/machines/${id}/tty`));
-		ws.binaryType = 'arraybuffer';
-		const enc = new TextEncoder();
-		ws.onmessage = (e) => {
-			if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data));
-			else term.write(e.data);
-		};
-		ws.onclose = () => {
-			if (phase === 'live') {
-				term?.write('\r\n\x1b[38;5;244m— computer stopped —\x1b[0m\r\n');
-				phase = 'closed';
-				stopCountdown();
-			}
-		};
-		term.onData((d: string) => ws?.readyState === WebSocket.OPEN && ws.send(enc.encode(d)));
-		// Copy the selection with Cmd+C (mac) or Ctrl+Shift+C; a bare Ctrl+C with no
-		// selection still passes through as SIGINT. Paste (Cmd+V / Ctrl+Shift+V) is
-		// handled natively by xterm — the pasted text arrives via onData above.
-		term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-			if (
-				e.type === 'keydown' &&
-				e.key.toLowerCase() === 'c' &&
-				(e.metaKey || (e.ctrlKey && e.shiftKey))
-			) {
-				const sel = term.getSelection();
-				if (sel) {
-					void navigator.clipboard?.writeText(sel).catch(() => {});
-					return false;
-				}
-			}
-			return true;
-		});
-		// Clear the boot/restore scrollback to a clean prompt, then nudge the guest.
-		setTimeout(() => {
-			if (!term) return;
-			term.reset();
-			term.write(
-				`\x1b[38;5;244mboring computers · ephemeral microVM · python3 + node ${net ? '· internet' : 'ready'}\x1b[0m\r\n`
-			);
-			if (ws?.readyState === WebSocket.OPEN) ws.send(enc.encode('\n'));
-		}, 450);
-		term.focus();
-	}
-
-	function startCountdown() {
-		// Prefer the server's expiry (works for both fresh boots and reconnects).
-		remaining = machine?.expires_at
-			? Math.max(0, Math.round((new Date(machine.expires_at).getTime() - Date.now()) / 1000))
-			: ttl;
-		countdown = setInterval(() => {
-			remaining -= 1;
-			if (remaining <= 0) stopCountdown();
-		}, 1000);
-	}
-	function stopCountdown() {
-		if (countdown) clearInterval(countdown);
-		countdown = null;
-	}
-
 	async function copyShare() {
 		if (!machine) return;
-		const url = `${location.origin}/c/${machine.id}`;
-		try {
-			await navigator.clipboard.writeText(url);
-		} catch {
-			/* ignore */
+		const ok = await copyMachineUrl(machine.id);
+		if (ok) {
+			shared = true;
+			copied = true;
+			setTimeout(() => (copied = false), 1600);
 		}
-		shared = true; // keep the machine alive for its TTL even if this tab closes
-		copied = true;
-		setTimeout(() => (copied = false), 1600);
 	}
 
 	function runAI() {
@@ -157,32 +81,23 @@
 		if (!goal || agentRunning || !machine) return;
 		agentRunning = true;
 		agentLine = 'thinking…';
-		const w = new WebSocket(
-			wsUrl(`/v1/machines/${machine.id}/shell-agent?goal=${encodeURIComponent(goal)}`)
+		agentWs = connectAgent(
+			machine.id,
+			`/v1/machines/${machine.id}/shell-agent?goal=${encodeURIComponent(goal)}`,
+			{
+				onDone: (text) => {
+					agentLine = text || 'done ✓';
+					agentRunning = false;
+				},
+				onError: (text) => {
+					agentLine = '⚠ ' + text;
+					agentRunning = false;
+				},
+				onSay: (text) => (agentLine = text),
+				onAction: (text) => (agentLine = text),
+				onClose: () => (agentRunning = false)
+			}
 		);
-		agentWs = w;
-		w.onmessage = (e) => {
-			let j: { type: string; text: string };
-			try {
-				j = JSON.parse(e.data);
-			} catch {
-				return;
-			}
-			if (j.type === 'done') {
-				agentLine = j.text || 'done ✓';
-				agentRunning = false;
-				w.close();
-			} else if (j.type === 'error') {
-				agentLine = '⚠ ' + j.text;
-				agentRunning = false;
-				w.close();
-			} else if (j.type === 'say' || j.type === 'action') {
-				agentLine = j.text;
-			}
-		};
-		w.onclose = () => {
-			agentRunning = false;
-		};
 	}
 
 	function aiKey(e: KeyboardEvent) {
@@ -194,29 +109,20 @@
 	}
 
 	export function close() {
-		stopCountdown();
+		timer.stop();
 		try {
 			agentWs?.close();
 		} catch {
 			/* ignore */
 		}
 		agentWs = null;
-		if (onResize) window.removeEventListener('resize', onResize);
-		onResize = null;
-		try {
-			ws?.close();
-		} catch {
-			/* ignore */
-		}
-		ws = null;
 		// Don't tear down a shared machine, or one we merely reconnected to — let it
 		// live its TTL for whoever else has the link.
 		if (machine && !shared && !machineId) {
 			void fetch(`${apiBase}/v1/machines/${machine.id}`, { method: 'DELETE' }).catch(() => {});
 		}
-		term?.dispose();
-		term = null;
-		fit = null;
+		termHandle?.cleanup();
+		termHandle = null;
 		machine = null;
 		phase = 'idle';
 		error = '';

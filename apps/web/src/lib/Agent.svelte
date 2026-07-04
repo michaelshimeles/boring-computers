@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { apiBase, wsUrl, createMachine, type Machine } from '$lib/boring';
+	import { apiBase, createMachine, type Machine } from '$lib/boring';
+	import { connectVnc, type VncHandle } from '$lib/vnc';
+	import { connectAgent } from '$lib/agent-ws';
 
 	type Phase = 'compose' | 'booting' | 'connecting' | 'live' | 'done' | 'error';
 
@@ -29,8 +31,7 @@
 	let inputEl = $state<HTMLTextAreaElement>();
 
 	let screen = $state<HTMLDivElement>();
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	let rfb: any = null;
+	let vncHandle: VncHandle | null = null;
 	let ws: WebSocket | null = null;
 	let attempts = 0;
 	let disposed = false;
@@ -57,47 +58,33 @@
 			phase = 'connecting';
 			caption = 'Starting the display…';
 			// Let X paint before noVNC's first full frame; the agent starts on connect.
-			setTimeout(connectVNC, 4500);
+			setTimeout(doConnectVNC, 4500);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			phase = 'error';
 		}
 	}
 
-	function teardownRfb() {
-		try {
-			rfb?.disconnect();
-		} catch {
-			/* ignore */
-		}
-		rfb = null;
-		// eslint-disable-next-line svelte/no-dom-manipulating
-		if (screen) screen.innerHTML = '';
-	}
-
-	async function connectVNC() {
+	async function doConnectVNC() {
 		if (disposed || !machine || !screen) return;
 		attempts += 1;
-		const { default: RFB } = await import('@novnc/novnc');
-		if (disposed) return;
-		teardownRfb();
 		try {
-			rfb = new RFB(screen, wsUrl(`/v1/machines/${machine.id}/vnc`), {});
-			rfb.scaleViewport = true;
-			rfb.resizeSession = false;
-			rfb.background = '#000';
-			rfb.viewOnly = true; // the AI drives; the human just watches
-			rfb.addEventListener('connect', () => {
-				// x11vnc accepts before the apps finish painting; give X a moment so
-				// the agent's first screenshot shows the desktop, not a black frame.
-				if (!disposed) setTimeout(startAgent, 2500);
-			});
-			rfb.addEventListener('disconnect', () => {
-				if (disposed) return;
-				if (!agentStarted && attempts < MAX_ATTEMPTS) setTimeout(connectVNC, 1500);
-			});
+			vncHandle = await connectVnc(
+				{
+					screen,
+					machineId: machine.id,
+					viewOnly: true,
+					onConnect: () => {
+						if (!disposed) setTimeout(startAgent, 2500);
+					},
+					onDisconnect: () => {
+						if (!agentStarted && attempts < MAX_ATTEMPTS) setTimeout(doConnectVNC, 1500);
+					}
+				},
+				() => disposed
+			);
 		} catch {
-			if (attempts < MAX_ATTEMPTS) setTimeout(connectVNC, 1500);
+			if (attempts < MAX_ATTEMPTS) setTimeout(doConnectVNC, 1500);
 		}
 	}
 
@@ -106,32 +93,27 @@
 		agentStarted = true;
 		phase = 'live';
 		caption = 'The AI is looking at the screen…';
-		ws = new WebSocket(
-			wsUrl(`/v1/machines/${machine.id}/agent?goal=${encodeURIComponent(activeGoal)}`)
+		ws = connectAgent(
+			machine.id,
+			`/v1/machines/${machine.id}/agent?goal=${encodeURIComponent(activeGoal)}`,
+			{
+				onSay: (text) => (caption = text),
+				onDone: (text) => {
+					phase = 'done';
+					caption = text || 'The AI finished the task.';
+				},
+				onError: (text) => {
+					phase = 'error';
+					error = text || 'the agent stopped unexpectedly';
+				},
+				onClose: () => {
+					if (phase === 'live') {
+						phase = 'done';
+						caption = 'The AI finished.';
+					}
+				}
+			}
 		);
-		ws.onmessage = (e) => {
-			let m: { type: string; text?: string };
-			try {
-				m = JSON.parse(e.data);
-			} catch {
-				return;
-			}
-			if (m.type === 'say' && m.text) {
-				caption = m.text;
-			} else if (m.type === 'done') {
-				phase = 'done';
-				caption = m.text || 'The AI finished the task.';
-			} else if (m.type === 'error') {
-				phase = 'error';
-				error = m.text || 'the agent stopped unexpectedly';
-			}
-		};
-		ws.onclose = () => {
-			if (phase === 'live') {
-				phase = 'done';
-				caption = 'The AI finished.';
-			}
-		};
 	}
 
 	export function close() {
@@ -142,12 +124,8 @@
 			/* ignore */
 		}
 		ws = null;
-		try {
-			rfb?.disconnect();
-		} catch {
-			/* ignore */
-		}
-		rfb = null;
+		vncHandle?.teardown();
+		vncHandle = null;
 		if (machine) {
 			void fetch(`${apiBase}/v1/machines/${machine.id}`, { method: 'DELETE' }).catch(() => {});
 		}
