@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
@@ -126,13 +127,16 @@ func (s *Server) authorized(r *http.Request) bool {
 	}
 	if h := r.Header.Get("Authorization"); h != "" {
 		if strings.HasPrefix(h, "Bearer ") {
-			if strings.TrimSpace(strings.TrimPrefix(h, "Bearer ")) == s.cfg.Token {
+			candidate := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+			if subtle.ConstantTimeCompare([]byte(candidate), []byte(s.cfg.Token)) == 1 {
 				return true
 			}
 		}
 	}
-	if q := r.URL.Query().Get("token"); q != "" && q == s.cfg.Token {
-		return true
+	if q := r.URL.Query().Get("token"); q != "" {
+		if subtle.ConstantTimeCompare([]byte(q), []byte(s.cfg.Token)) == 1 {
+			return true
+		}
 	}
 	return false
 }

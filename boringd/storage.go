@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"time"
 
@@ -66,7 +67,14 @@ func newStorage(cfg Config) (*Storage, error) {
 
 func prefix(id string) string     { return id + "/" }
 func metaKey(id string) string    { return id + "/.volume.json" }
-func fileKey(id, p string) string { return id + "/f/" + strings.TrimPrefix(p, "/") }
+func fileKey(id, p string) string {
+	p = strings.TrimPrefix(p, "/")
+	cleaned := path.Clean(p)
+	if cleaned == "." || strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, "/../") {
+		cleaned = "_"
+	}
+	return id + "/f/" + cleaned
+}
 
 // Create writes a new volume marker and returns its metadata.
 func (s *Storage) Create(id string, ttl time.Duration) (*VolumeMeta, error) {

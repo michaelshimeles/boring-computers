@@ -7,9 +7,19 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 )
+
+// validVolumePath rejects paths containing directory traversal components.
+func validVolumePath(p string) bool {
+	cleaned := path.Clean(strings.TrimPrefix(p, "/"))
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") || strings.HasSuffix(cleaned, "/..") {
+		return false
+	}
+	return cleaned != "" && cleaned != "."
+}
 
 // HTTP surface for persistent volumes. Volumes are addressed by an unguessable
 // id (the capability); with no accounts yet, holding the id is holding access.
@@ -88,6 +98,10 @@ func (s *Server) handlePutVolumeFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "path required"})
 		return
 	}
+	if !validVolumePath(p) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid path"})
+		return
+	}
 	if _, err := s.storage.Get(id); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no such volume"})
 		return
@@ -119,6 +133,10 @@ func (s *Server) handleGetVolumeFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "path required"})
 		return
 	}
+	if !validVolumePath(p) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid path"})
+		return
+	}
 	obj, err := s.storage.GetFile(id, p)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no such file"})
@@ -135,6 +153,10 @@ func (s *Server) handleDeleteVolumeFile(w http.ResponseWriter, r *http.Request) 
 	p := strings.TrimSpace(r.URL.Query().Get("path"))
 	if p == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "path required"})
+		return
+	}
+	if !validVolumePath(p) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid path"})
 		return
 	}
 	if err := s.storage.DeleteFile(id, p); err != nil {
