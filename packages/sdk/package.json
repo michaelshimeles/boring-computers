@@ -18,6 +18,9 @@
 		"lint": "prettier --check .",
 		"format": "prettier --write ."
 	},
+	"dependencies": {
+		"effect": "^3.12.0"
+	},
 	"devDependencies": {
 		"typescript": "^6.0.3",
 		"@boring/typescript-config": "*",

@@ -12,26 +12,17 @@ import {
 	CallToolRequestSchema,
 	ListToolsRequestSchema
 } from '@modelcontextprotocol/sdk/types.js';
+import { Effect } from 'effect';
+import { make } from '@boring/sdk';
 
 const BASE = process.env.BORING_URL || 'https://162-43-188-89.sslip.io';
 const WSBASE = BASE.replace(/^http/, 'ws');
 const PREVIEW_HOST = new URL(BASE).host;
 
-async function api(path, opts = {}) {
-	const res = await fetch(BASE + path, {
-		...opts,
-		headers: { 'content-type': 'application/json', ...(opts.headers || {}) }
-	});
-	const text = await res.text();
-	let body;
-	try {
-		body = JSON.parse(text);
-	} catch {
-		body = text;
-	}
-	if (!res.ok) throw new Error(typeof body === 'object' ? (body.error ?? res.statusText) : text);
-	return body;
-}
+// The MCP protocol layer is Promise-based; machine ops go through the Effect SDK,
+// run to a Promise at this boundary.
+const boring = make({ baseUrl: BASE });
+const run = (effect) => Effect.runPromise(effect);
 
 // Run a natural-language task via the terminal agent, collecting its narration.
 function runTask(id, goal) {
@@ -135,14 +126,13 @@ function text(s) {
 async function dispatch(name, a) {
 	switch (name) {
 		case 'launch_computer': {
-			const m = await api('/v1/machines', {
-				method: 'POST',
-				body: JSON.stringify({
+			const m = await run(
+				boring.createMachine({
 					template: a.template || 'desktop',
 					net: a.internet !== false,
-					ttl_seconds: a.ttl_seconds || 600
+					ttlSeconds: a.ttl_seconds || 600
 				})
-			});
+			);
 			return text(
 				`Launched ${m.template} computer ${m.id} (${m.mode}, ${m.boot_ms}ms). It self-destructs at ${m.expires_at}. Use run_task with id "${m.id}".`
 			);
@@ -163,16 +153,15 @@ async function dispatch(name, a) {
 		case 'preview_url':
 			return text(`https://${a.id}--${a.port}.${PREVIEW_HOST}/`);
 		case 'fork_computer': {
-			const f = await api(`/v1/machines/${a.id}/branch`, { method: 'POST' });
+			const f = await run(boring.branchMachine(a.id));
 			return text(`Forked → ${f.id} (${f.mode}, ${f.boot_ms}ms). A live clone of ${a.id}.`);
 		}
 		case 'list_computers': {
-			const l = await api('/v1/machines');
-			const arr = l.machines || l || [];
+			const arr = await run(boring.listMachines);
 			return text(arr.length ? JSON.stringify(arr, null, 2) : 'No computers running.');
 		}
 		case 'stop_computer':
-			await api(`/v1/machines/${a.id}`, { method: 'DELETE' });
+			await run(boring.destroyMachine(a.id));
 			return text(`Stopped ${a.id}.`);
 		default:
 			throw new Error(`unknown tool ${name}`);

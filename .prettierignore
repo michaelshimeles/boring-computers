@@ -1,0 +1,9 @@
+node_modules
+dist
+build
+.svelte-kit
+.turbo
+.vercel
+coverage
+package-lock.json
+*.min.js

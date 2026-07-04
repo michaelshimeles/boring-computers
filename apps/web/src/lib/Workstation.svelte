@@ -543,12 +543,10 @@
 				{#if agentRunning}<span class="size-1.5 animate-pulse rounded-full bg-accent"></span>{/if}
 				<span class="min-w-0 truncate">{agentLine}</span>
 				{#if previewLink}
-					<a
-						href={previewLink}
-						target="_blank"
-						rel="noopener"
+					<button
+						onclick={() => window.open(previewLink, '_blank', 'noopener')}
 						class="ml-auto shrink-0 rounded-geist bg-accent/15 px-2 py-0.5 font-semibold text-accent transition-colors hover:bg-accent/25"
-						>your app is live → open ↗</a
+						>your app is live → open ↗</button
 					>
 				{/if}
 			</p>

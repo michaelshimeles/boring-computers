@@ -1,72 +1,73 @@
 # @boring/sdk
 
-Tiny, dependency-free TypeScript client for the **boring computers** Firecracker microVM
-API (`boringd`). Uses the global `fetch` and `WebSocket` shipped with Node 24+, so there is
-nothing to install beyond the workspace itself.
+An [Effect](https://effect.website)-native TypeScript client for the **boring
+computers** Firecracker microVM API (`boringd`). Every call is an `Effect` with
+typed errors; the serial console is a `Stream` with `Scope`-based teardown. Uses
+the global `fetch` / `WebSocket` (Node 24+ / browsers).
 
-## Install / build
+> Lives in the monorepo — not published to npm. Build it and import from `dist/`.
 
-This package lives in the monorepo workspace. From the repo root:
-
-```sh
-npm install           # once, at the root (do not run inside this package)
-npm run build -w @boring/sdk   # emits dist/
-```
-
-Or from this directory:
+## Build
 
 ```sh
-npm run build   # tsc -> dist/
-npm run check   # tsc --noEmit
+npm install                     # once, at the repo root
+npm run build -w @boring/sdk    # tsc -> dist/
 ```
 
 ## Usage
 
 ```ts
-import { BoringClient } from '@boring/sdk';
+import { Effect, Stream } from 'effect';
+import { make } from '@boring/sdk';
 
-const client = new BoringClient({
-	baseUrl: 'http://localhost:8080',
-	token: process.env.BORING_TOKEN
+const boring = make({ baseUrl: 'http://localhost:8080' });
+
+const program = Effect.gen(function* () {
+	const vm = yield* boring.createMachine({ template: 'python', ttlSeconds: 300 });
+
+	// Typed errors — no throws. Catch by tag:
+	const found = yield* boring
+		.getMachine(vm.id)
+		.pipe(Effect.catchTag('ResponseError', (e) => Effect.succeed(`http ${e.status}`)));
+
+	// The serial console is a Stream; the socket closes with the Scope.
+	yield* Effect.scoped(
+		Effect.gen(function* () {
+			const tty = yield* boring.connectTty(vm.id);
+			yield* tty.send("python3 -c 'print(2 + 2)'\n");
+			yield* tty.output.pipe(
+				Stream.runForEach((bytes) => Effect.sync(() => process.stdout.write(bytes)))
+			);
+		})
+	);
+
+	yield* boring.destroyMachine(vm.id);
 });
 
-const vm = await client.createMachine({ template: 'python', ttlSeconds: 300 });
-console.log(vm.id, vm.mode, vm.boot_ms);
-
-const tty = client.connectTty(vm.id);
-tty.onData((bytes) => process.stdout.write(bytes));
-await tty.ready;
-tty.send("python3 -c 'print(2 + 2)'\n");
-
-// later
-await client.destroyMachine(vm.id);
+Effect.runPromise(program);
 ```
+
+Prefer dependency injection? Use `layer({ baseUrl })` and the `BoringClient` tag
+(`yield* BoringClient`).
 
 ### API
 
-- `new BoringClient({ baseUrl?, token? })`
-- `createMachine(opts?: { template?, ttlSeconds? }): Promise<Machine>`
-- `listMachines(): Promise<Machine[]>`
-- `getMachine(id): Promise<Machine>`
-- `destroyMachine(id): Promise<void>`
-- `branchMachine(id): Promise<Machine>` — fork from snapshot (may reject 501)
-- `connectTty(id): TtySession` — `.onData(cb)`, `.send(bytes|string)`, `.close()`, `.ready`
+- `make({ baseUrl?, token? }): BoringClient` — build a client
+- `layer({ baseUrl?, token? })` + `BoringClient` tag — the same, as a `Layer`
+- `createMachine(opts?: { template?, ttlSeconds?, net? }): Effect<Machine, BoringError>`
+  — retries transient failures internally
+- `listMachines: Effect<Machine[], BoringError>`
+- `getMachine(id) / branchMachine(id): Effect<Machine, BoringError>`
+- `destroyMachine(id): Effect<void, BoringError>`
+- `connectTty(id): Effect<TtyChannel, RequestError, Scope>` — `{ output: Stream, send }`
 
-## Interactive demo
+Errors are tagged: `RequestError` (transport) and `ResponseError` (`{ status, body }`).
 
-`demo.mjs` creates a `python` VM and gives you a live shell right in your terminal.
+## Demo
 
-Point it at the box (typically over an SSH tunnel to the Latitude.sh server):
+`demo.mjs` boots a `python` VM and drops you into a live shell (destroyed on exit).
+Build first, then:
 
 ```sh
-# forward the daemon port to your laptop
-ssh -N -L 8080:localhost:8080 user@your-box &
-
-# then run the demo
-BORING_URL=http://localhost:8080 BORING_TOKEN=your-token node demo.mjs
+BORING_URL=http://localhost:8080 node demo.mjs   # Ctrl-] to quit
 ```
-
-You'll see the boot mode and `boot_ms`, then a live serial shell. Try `python3` inside it.
-Press **Ctrl-]** (or **Ctrl-C**) to destroy the machine and exit cleanly.
-
-Build the SDK first (`npm run build`) since the demo imports from `./dist/index.js`.

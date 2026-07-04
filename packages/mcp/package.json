@@ -14,6 +14,8 @@
 		"node": ">=20"
 	},
 	"dependencies": {
-		"@modelcontextprotocol/sdk": "^1.29.0"
+		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@boring/sdk": "*",
+		"effect": "^3.12.0"
 	}
 }

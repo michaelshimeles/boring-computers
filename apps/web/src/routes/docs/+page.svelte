@@ -87,31 +87,44 @@ curl -s -X POST ${API}/v1/machines \\
 
 	<h2 class="mt-12 text-[15px] font-semibold text-ink">TypeScript client</h2>
 	<p class="mt-2 text-[13px] leading-relaxed text-ink-muted">
-		A small dependency-free client (global <code class="text-ink">fetch</code>/<code
-			class="text-ink">WebSocket</code
-		>) lives in the repo at <code class="text-ink">packages/sdk</code> — not on npm, use it from source:
+		An <a
+			href="https://effect.website"
+			target="_blank"
+			rel="noopener"
+			class="text-accent hover:underline">Effect</a
+		>-native client lives in the repo at <code class="text-ink">packages/sdk</code> (not on npm) — typed
+		errors, a streaming serial console, retries built in:
 	</p>
 	<div class="mt-3">
-		{@render code(`import { BoringClient } from '@boring/sdk';
+		{@render code(`import { Effect, Stream } from 'effect';
+import { make } from '@boring/sdk';
 
-const boring = new BoringClient({ baseUrl: '${API}' });
+const boring = make({ baseUrl: '${API}' });
 
-// boot a computer
-const vm = await boring.createMachine({ template: 'python', ttlSeconds: 60 });
-console.log(vm.id, vm.mode, \`\${vm.boot_ms}ms\`);
+Effect.runPromise(
+  Effect.gen(function* () {
+    const vm = yield* boring.createMachine({ template: 'python', ttlSeconds: 60 });
+    console.log(vm.id, vm.mode, \`\${vm.boot_ms}ms\`);
 
-// attach to its serial console
-const tty = boring.connectTty(vm.id);
-tty.onData((bytes) => process.stdout.write(bytes));
-tty.send('print("hello from a microVM")\\n');
+    // the serial console is a Stream; the socket closes with the Scope
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const tty = yield* boring.connectTty(vm.id);
+        yield* tty.send('print("hello from a microVM")\\n');
+        yield* tty.output.pipe(Stream.runForEach((b) => Effect.sync(() => process.stdout.write(b))));
+      })
+    );
 
-// clean up (or let the TTL self-destruct it)
-await boring.destroyMachine(vm.id);`)}
+    yield* boring.destroyMachine(vm.id);
+  })
+);`)}
 	</div>
 	<p class="mt-3 text-[13px] leading-relaxed text-ink-muted">
-		Also: <code class="text-ink">listMachines()</code>,
+		Also: <code class="text-ink">listMachines</code>,
 		<code class="text-ink">getMachine(id)</code>,
-		<code class="text-ink">branchMachine(id)</code>.
+		<code class="text-ink">branchMachine(id)</code>. Errors are tagged (<code class="text-ink"
+			>RequestError</code
+		>, <code class="text-ink">ResponseError</code>).
 	</p>
 
 	<h2 class="mt-12 text-[15px] font-semibold text-ink">MCP server</h2>
