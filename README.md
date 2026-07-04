@@ -67,3 +67,8 @@ npm run build    # production build
 npm run check    # type-check
 npm run lint     # prettier + eslint
 ```
+
+## Contributing & license
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under
+[Apache 2.0](LICENSE).
