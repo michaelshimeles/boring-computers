@@ -39,16 +39,30 @@ const MachineSchema = Schema.Struct({
 });
 const MachineListSchema = Schema.Struct({ machines: Schema.Array(MachineSchema) });
 
+const VolumeSchema = Schema.Struct({
+	id: Schema.String,
+	created_at: Schema.String,
+	expires_at: Schema.String,
+	quota_mb: Schema.Number,
+	used_bytes: Schema.optional(Schema.Number),
+	files: Schema.optional(Schema.Number)
+});
+
 /** A microVM as returned by the boringd REST API. */
 export type Machine = Schema.Schema.Type<typeof MachineSchema>;
 export type MachineMode = Machine['mode'];
 export type MachineStatus = Machine['status'];
+
+/** A persistent volume (S3-backed storage that outlives a machine). */
+export type Volume = Schema.Schema.Type<typeof VolumeSchema>;
 
 export interface CreateMachineOptions {
 	readonly template?: string;
 	readonly ttlSeconds?: number;
 	/** Give the machine internet (cold-boots instead of restoring a snapshot). */
 	readonly net?: boolean;
+	/** Restore this volume's snapshot into /root on boot. */
+	readonly volume?: string;
 }
 
 export interface BoringClientOptions {
@@ -93,6 +107,14 @@ export interface BoringClient {
 	readonly branchMachine: (id: string) => Effect.Effect<Machine, BoringError>;
 	/** Open a serial console. The socket is closed when the enclosing `Scope` closes. */
 	readonly connectTty: (id: string) => Effect.Effect<TtyChannel, RequestError, Scope.Scope>;
+	/** Create a persistent volume (storage that outlives a machine). */
+	readonly createVolume: (ttlSeconds?: number) => Effect.Effect<Volume, BoringError>;
+	/** Fetch a volume's metadata + usage. */
+	readonly getVolume: (id: string) => Effect.Effect<Volume, BoringError>;
+	/** Delete a volume and all its files. */
+	readonly deleteVolume: (id: string) => Effect.Effect<void, BoringError>;
+	/** Save a machine's /root into a volume (attach on launch via createMachine). */
+	readonly saveMachine: (machineId: string, volumeId: string) => Effect.Effect<void, BoringError>;
 }
 
 export const BoringClient = Context.GenericTag<BoringClient>('@boring/sdk/BoringClient');
@@ -188,12 +210,23 @@ export const make = (options: BoringClientOptions = {}): BoringClient => {
 
 	return {
 		createMachine: (opts = {}) => {
-			const body: { template?: string; ttl_seconds?: number; net?: boolean } = {};
+			const body: { template?: string; ttl_seconds?: number; net?: boolean; volume?: string } = {};
 			if (opts.template !== undefined) body.template = opts.template;
 			if (opts.ttlSeconds !== undefined) body.ttl_seconds = opts.ttlSeconds;
 			if (opts.net !== undefined) body.net = opts.net;
+			if (opts.volume !== undefined) body.volume = opts.volume;
 			return request('POST', '/v1/machines', MachineSchema, body).pipe(Effect.retry(retry));
 		},
+		createVolume: (ttlSeconds) =>
+			request('POST', '/v1/volumes', VolumeSchema, ttlSeconds ? { ttl_seconds: ttlSeconds } : {}),
+		getVolume: (id) => request('GET', `/v1/volumes/${encodeURIComponent(id)}`, VolumeSchema),
+		deleteVolume: (id) => request('DELETE', `/v1/volumes/${encodeURIComponent(id)}`, null),
+		saveMachine: (machineId, volumeId) =>
+			request(
+				'POST',
+				`/v1/machines/${encodeURIComponent(machineId)}/save?volume=${encodeURIComponent(volumeId)}`,
+				null
+			),
 		listMachines: request('GET', '/v1/machines', MachineListSchema).pipe(
 			Effect.map((r) => r.machines)
 		),

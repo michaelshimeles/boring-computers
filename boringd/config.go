@@ -59,6 +59,18 @@ type Config struct {
 	PreviewBase string // BORING_PREVIEW_BASE, e.g. previews.example.com ("" disables previews)
 	LeasesPath  string // dnsmasq lease file, for guest IP lookup
 
+	// Storage: persistent volumes on an S3-compatible store (MinIO / Latitude).
+	// Enabled when S3Endpoint is set.
+	S3Endpoint       string // BORING_S3_ENDPOINT host:port (no scheme)
+	S3Key            string // BORING_S3_KEY
+	S3Secret         string // BORING_S3_SECRET
+	S3Bucket         string // BORING_S3_BUCKET (default boring-volumes)
+	S3UseSSL         bool   // BORING_S3_SSL=="1"
+	VolumeQuotaMB    int    // per-volume size cap
+	VolumeTTLDefault int    // default volume lifetime (seconds)
+	VolumeTTLMax     int    // max volume lifetime (seconds)
+	VolumeRatePerMin int    // per-IP volume creations/min
+
 	// Warm pool: keep this many desktops pre-booted so a request is instant.
 	DesktopPool int
 
@@ -113,6 +125,15 @@ func LoadConfig() Config {
 		NetSubnet:           envStr("BORING_NET_SUBNET", "10.200.0"),
 		PreviewBase:         os.Getenv("BORING_PREVIEW_BASE"), // deployment-specific; unset disables previews
 		LeasesPath:          envStr("BORING_LEASES", "/var/lib/misc/dnsmasq.leases"),
+		S3Endpoint:          os.Getenv("BORING_S3_ENDPOINT"),
+		S3Key:               os.Getenv("BORING_S3_KEY"),
+		S3Secret:            os.Getenv("BORING_S3_SECRET"),
+		S3Bucket:            envStr("BORING_S3_BUCKET", "boring-volumes"),
+		S3UseSSL:            os.Getenv("BORING_S3_SSL") == "1",
+		VolumeQuotaMB:       envInt("BORING_VOLUME_QUOTA_MB", 256),
+		VolumeTTLDefault:    envInt("BORING_VOLUME_TTL", 86400),
+		VolumeTTLMax:        envInt("BORING_VOLUME_TTL_MAX", 604800),
+		VolumeRatePerMin:    envInt("BORING_VOLUME_RATE", 10),
 		DesktopPool:         envInt("BORING_DESKTOP_POOL", 1),
 		OpenRouterKey:       os.Getenv("BORING_OPENROUTER_KEY"),
 		InferenceMaxTokens:  envInt("BORING_INFER_MAX_TOKENS", 1024),

@@ -7,6 +7,8 @@
 		createMachine,
 		getMachine,
 		branchMachine,
+		createVolume,
+		saveMachine,
 		previewUrl,
 		type Machine
 	} from '$lib/boring';
@@ -19,8 +21,9 @@
 	let {
 		onClose,
 		ttl = 300,
-		machineId
-	}: { onClose?: () => void; ttl?: number; machineId?: string } = $props();
+		machineId,
+		volume
+	}: { onClose?: () => void; ttl?: number; machineId?: string; volume?: string } = $props();
 
 	let phase = $state<Phase>('booting');
 	let machine = $state<Machine | null>(null);
@@ -136,6 +139,28 @@
 		}
 	}
 
+	// Save: persist /root to a volume that outlives the machine. Reuses the
+	// attached volume if there is one, else makes a new volume; surfaces a restore
+	// link (?restore=vol-…) so you can reopen the work in a fresh computer.
+	let saving = $state(false);
+	async function save() {
+		if (!machine || saving) return;
+		saving = true;
+		fileMsg = '💾 saving to storage…';
+		try {
+			const vol = volume ?? (await createVolume()).id;
+			await saveMachine(machine.id, vol);
+			const link = `${location.origin}/?restore=${vol}`;
+			await navigator.clipboard?.writeText(link).catch(() => {});
+			fileMsg = `💾 saved → ${vol} · restore link copied`;
+		} catch (e) {
+			fileMsg = '⚠ ' + (e instanceof Error ? e.message : 'save failed');
+		} finally {
+			saving = false;
+			setTimeout(() => (fileMsg = ''), 8000);
+		}
+	}
+
 	let countdown: ReturnType<typeof setInterval> | null = null;
 	let onResize: (() => void) | null = null;
 	let disposed = false;
@@ -150,7 +175,9 @@
 		phase = 'booting';
 		error = '';
 		try {
-			machine = machineId ? await getMachine(machineId) : await createMachine('desktop', ttl);
+			machine = machineId
+				? await getMachine(machineId)
+				: await createMachine('desktop', ttl, false, volume);
 			phase = 'connecting';
 			startCountdown();
 			void openTerminal(machine.id); // the serial shell is up early
@@ -454,6 +481,13 @@
 					>
 				</span>
 				<span class="tabular-nums">{remaining}s</span>
+				<button
+					class="text-ink-subtle transition-colors hover:text-ink disabled:opacity-40"
+					onclick={save}
+					disabled={saving}
+					title="Save this computer's files to storage that outlives it"
+					>{saving ? 'saving…' : 'save 💾'}</button
+				>
 				<button
 					class="text-ink-subtle transition-colors hover:text-ink disabled:opacity-40"
 					onclick={fork}

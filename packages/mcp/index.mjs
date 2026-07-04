@@ -71,6 +71,7 @@ const TOOLS = [
 			properties: {
 				template: { type: 'string', enum: ['desktop', 'python'], default: 'desktop' },
 				internet: { type: 'boolean', description: 'give the shell internet (desktops always have it)', default: true },
+				volume: { type: 'string', description: 'optional volume id to restore into /root on boot' },
 				ttl_seconds: { type: 'number', description: 'auto-destroy after this many seconds (15–900)', default: 600 }
 			}
 		}
@@ -116,6 +117,24 @@ const TOOLS = [
 		name: 'stop_computer',
 		description: 'Destroy a computer now.',
 		inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] }
+	},
+	{
+		name: 'create_volume',
+		description:
+			'Create a persistent volume — storage that outlives a computer. Save a computer into it, then restore it into a fresh computer later (pass its id as launch_computer volume).',
+		inputSchema: {
+			type: 'object',
+			properties: { ttl_seconds: { type: 'number', description: 'how long the volume lives' } }
+		}
+	},
+	{
+		name: 'save_computer',
+		description: "Save a computer's /root into a volume, so its work survives the self-destruct.",
+		inputSchema: {
+			type: 'object',
+			properties: { id: { type: 'string' }, volume: { type: 'string' } },
+			required: ['id', 'volume']
+		}
 	}
 ];
 
@@ -130,12 +149,23 @@ async function dispatch(name, a) {
 				boring.createMachine({
 					template: a.template || 'desktop',
 					net: a.internet !== false,
-					ttlSeconds: a.ttl_seconds || 600
+					ttlSeconds: a.ttl_seconds || 600,
+					volume: a.volume || undefined
 				})
 			);
 			return text(
 				`Launched ${m.template} computer ${m.id} (${m.mode}, ${m.boot_ms}ms). It self-destructs at ${m.expires_at}. Use run_task with id "${m.id}".`
 			);
+		}
+		case 'create_volume': {
+			const v = await run(boring.createVolume(a.ttl_seconds || undefined));
+			return text(
+				`Created volume ${v.id} (${v.quota_mb}MB). Save a computer into it with save_computer, then restore it by passing volume "${v.id}" to launch_computer.`
+			);
+		}
+		case 'save_computer': {
+			await run(boring.saveMachine(a.id, a.volume));
+			return text(`Saved ${a.id} into volume ${a.volume}. Launch a new computer with that volume to restore it.`);
 		}
 		case 'run_task': {
 			const { log, preview, note } = await runTask(a.id, a.task);

@@ -121,6 +121,33 @@ curl -s -X POST ${API}/v1/machines \\
   -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'`)}
 	</div>
 
+	<h2 class="mt-12 text-[15px] font-semibold text-ink">Storage</h2>
+	<p class="mt-2 text-[13px] leading-relaxed text-ink-muted">
+		Persistent volumes (S3-backed) that outlive a machine. Create one, <code class="text-ink"
+			>save</code
+		>
+		a machine's /root into it, then restore it into a fresh machine by passing its id as
+		<code class="text-ink">volume</code> on launch. Volumes are addressed by an unguessable id and garbage-collected
+		on a TTL.
+	</p>
+	<div class="mt-3 overflow-x-auto rounded-geist border border-line">
+		<table class="w-full border-collapse font-mono text-[12px]">
+			<tbody class="text-ink-muted">
+				{#each [['POST', '/v1/volumes', 'Create a volume. Body: {ttl_seconds}'], ['GET', '/v1/volumes/{id}', 'Metadata + usage'], ['DELETE', '/v1/volumes/{id}', 'Delete a volume'], ['GET', '/v1/volumes/{id}/files', 'List files'], ['PUT', '/v1/volumes/{id}/file?path=…', 'Upload a file'], ['GET', '/v1/volumes/{id}/file?path=…', 'Download a file'], ['POST', '/v1/machines/{id}/save?volume=…', "Save a machine's /root into a volume"]] as row (row[1] + row[0])}
+					<tr class="border-b border-line last:border-0">
+						<td class="w-16 px-3 py-2 align-top text-accent">{row[0]}</td>
+						<td class="px-3 py-2 align-top whitespace-nowrap text-ink">{row[1]}</td>
+						<td class="px-3 py-2 align-top text-ink-faint">{row[2]}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
+	<p class="mt-3 text-[13px] leading-relaxed text-ink-muted">
+		Attach on launch: <code class="text-ink">POST /v1/machines</code> with
+		<code class="text-ink">{'{"volume":"vol-…"}'}</code> restores the volume into /root first.
+	</p>
+
 	<h2 class="mt-12 text-[15px] font-semibold text-ink">TypeScript client</h2>
 	<p class="mt-2 text-[13px] leading-relaxed text-ink-muted">
 		An <a

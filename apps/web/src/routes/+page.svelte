@@ -9,9 +9,16 @@
 	// terminal (its serial shell, coding agents preinstalled), and an AI prompt
 	// box that drives it. `launched` flips the whole thing on.
 	let launched = $state(false);
+	// ?restore=vol-… launches straight into a computer with that volume attached.
+	let restore = $state<string | undefined>(undefined);
 
 	let fleet = $state(0);
 	onMount(() => {
+		const vol = new URLSearchParams(location.search).get('restore');
+		if (vol) {
+			restore = vol;
+			launched = true;
+		}
 		const tick = async () => (fleet = await fleetCount());
 		void tick();
 		const t = setInterval(tick, 4000);
@@ -47,7 +54,11 @@
 			desc: 'One OpenAI-compatible endpoint for every model — Claude on Anthropic, the rest via OpenRouter.',
 			live: true
 		},
-		{ name: 'Storage', desc: 'Persistent volumes that outlive the machine.', live: false }
+		{
+			name: 'Storage',
+			desc: 'Persistent volumes that outlive the machine — save a computer, restore it into a fresh one.',
+			live: true
+		}
 	];
 
 	const HOW = [
@@ -169,7 +180,7 @@
 			<div class="w-full">
 				<Chassis on={launched}>
 					{#if launched}
-						<Workstation {ttl} onClose={() => (launched = false)} />
+						<Workstation {ttl} volume={restore} onClose={() => (launched = false)} />
 					{:else}
 						<!-- powered-down screen: click it (or press enter) to boot -->
 						<button

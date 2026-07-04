@@ -49,6 +49,11 @@ from a live snapshot) are best-effort optimizations that fall back cleanly.
 | GET | `/v1/machines/{id}/shell-agent?goal=` | WebSocket, terminal agent narration (JSON) |
 | POST | `/v1/chat/completions` | OpenAI-compatible inference gateway |
 | GET | `/v1/models` | models the gateway can serve |
+| POST | `/v1/volumes` | create a persistent volume (S3-backed) |
+| GET/DELETE | `/v1/volumes/{id}` | volume metadata / delete |
+| GET | `/v1/volumes/{id}/files` | list files |
+| PUT/GET/DELETE | `/v1/volumes/{id}/file?path=` | upload / download / delete a file |
+| POST | `/v1/machines/{id}/save?volume=` | save a machine's /root into a volume |
 
 Preview: a Host of `<id>--<port>.<BORING_PREVIEW_BASE>` reverse-proxies to the guest's
 port (see `preview.go`); `GET /internal/tls-check` gates Caddy on-demand TLS.
@@ -85,6 +90,13 @@ The WebSocket route also accepts `?token=<token>`. `/healthz` is always open.
 | `BORING_AGENT_MAX_CONCURRENT` | `2` | simultaneous agent runs (cost guard) |
 | `BORING_INFER_MAX_TOKENS` | `1024` | `max_tokens` clamp on the gateway |
 | `BORING_INFER_RATE` | `20` | gateway requests/min per IP |
+| `BORING_S3_ENDPOINT` | *(unset)* | S3 host:port for volumes (MinIO/Latitude); unset disables storage |
+| `BORING_S3_KEY` / `BORING_S3_SECRET` | *(unset)* | S3 access key + secret |
+| `BORING_S3_BUCKET` | `boring-volumes` | bucket that holds all volumes |
+| `BORING_S3_SSL` | `0` | `1` for an https S3 endpoint |
+| `BORING_VOLUME_QUOTA_MB` | `256` | per-volume size cap |
+| `BORING_VOLUME_TTL` / `_MAX` | `86400` / `604800` | default / max volume lifetime (s) |
+| `BORING_VOLUME_RATE` | `10` | volume creations/min per IP |
 
 TTL is clamped to `[15, 900]` seconds, default `120`.
 

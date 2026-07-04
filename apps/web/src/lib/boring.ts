@@ -16,6 +16,31 @@ export function wsUrl(path: string): string {
 	return `${proto}://${location.host}/boring${path}`;
 }
 
+/** Create a persistent volume; returns its id. */
+export async function createVolume(ttlSeconds = 604800): Promise<{ id: string }> {
+	const res = await fetch(`${apiBase}/v1/volumes`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ ttl_seconds: ttlSeconds })
+	});
+	if (!res.ok) throw new Error('storage is unavailable right now');
+	return (await res.json()) as { id: string };
+}
+
+/** Save a machine's /root into a volume. */
+export async function saveMachine(id: string, volume: string): Promise<void> {
+	const res = await fetch(
+		`${apiBase}/v1/machines/${id}/save?volume=${encodeURIComponent(volume)}`,
+		{
+			method: 'POST'
+		}
+	);
+	if (!res.ok) {
+		const j = await res.json().catch(() => ({}));
+		throw new Error(j.error ?? 'save failed');
+	}
+}
+
 /** Fork a running machine: clones its live state into a new machine. */
 export async function branchMachine(id: string): Promise<Machine> {
 	const res = await fetch(`${apiBase}/v1/machines/${id}/branch`, { method: 'POST' });
@@ -51,7 +76,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function createMachine(
 	template: string,
 	ttlSeconds: number,
-	net = false
+	net = false,
+	volume?: string
 ): Promise<Machine> {
 	const attempts = 3;
 	let last = 'the datacenter is busy — try again in a moment';
@@ -59,13 +85,14 @@ export async function createMachine(
 		let res: Response | null = null;
 		try {
 			const ctrl = new AbortController();
-			// A connected machine cold-boots (~a few seconds), so allow longer.
-			const timer = setTimeout(() => ctrl.abort(), net ? 20000 : 12000);
+			// A connected machine cold-boots (~a few seconds); restoring a volume
+			// adds more, so allow longer still.
+			const timer = setTimeout(() => ctrl.abort(), volume ? 30000 : net ? 20000 : 12000);
 			try {
 				res = await fetch(`${apiBase}/v1/machines`, {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({ template, ttl_seconds: ttlSeconds, net }),
+					body: JSON.stringify({ template, ttl_seconds: ttlSeconds, net, volume }),
 					signal: ctrl.signal
 				});
 			} finally {

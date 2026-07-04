@@ -11,15 +11,24 @@ import (
 
 // Server wires the HTTP mux, auth middleware and JSON handlers.
 type Server struct {
-	cfg   Config
-	mgr   *Manager
-	mux   *http.ServeMux
-	infer *inferLimiter
+	cfg        Config
+	mgr        *Manager
+	mux        *http.ServeMux
+	infer      *inferLimiter
+	storage    *Storage      // nil when no S3 endpoint is configured
+	volLimiter *inferLimiter // per-IP volume-creation cap
 }
 
 // NewServer builds the router with all routes from the contract.
 func NewServer(cfg Config, mgr *Manager) *Server {
-	s := &Server{cfg: cfg, mgr: mgr, mux: http.NewServeMux(), infer: newInferLimiter(cfg.InferenceRatePerMin)}
+	s := &Server{cfg: cfg, mgr: mgr, mux: http.NewServeMux(), infer: newInferLimiter(cfg.InferenceRatePerMin), volLimiter: newInferLimiter(cfg.VolumeRatePerMin)}
+	if st, err := newStorage(cfg); err != nil {
+		log.Printf("storage disabled: %v", err)
+	} else if st != nil {
+		s.storage = st
+		s.startVolumeGC()
+		log.Printf("storage enabled (bucket=%s quota=%dMB)", cfg.S3Bucket, cfg.VolumeQuotaMB)
+	}
 
 	// Open route: health check (never requires auth).
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -41,6 +50,19 @@ func NewServer(cfg Config, mgr *Manager) *Server {
 	// File transfer over the guest serial console.
 	s.mux.Handle("POST /v1/machines/{id}/upload", s.auth(http.HandlerFunc(s.handleUpload)))
 	s.mux.Handle("GET /v1/machines/{id}/download", s.auth(http.HandlerFunc(s.handleDownload)))
+
+	// Persistent volumes (S3-backed). Registered only when storage is configured.
+	if s.storage != nil {
+		s.mux.Handle("POST /v1/volumes", s.auth(http.HandlerFunc(s.handleCreateVolume)))
+		s.mux.Handle("GET /v1/volumes/{id}", s.auth(http.HandlerFunc(s.handleGetVolume)))
+		s.mux.Handle("DELETE /v1/volumes/{id}", s.auth(http.HandlerFunc(s.handleDeleteVolume)))
+		s.mux.Handle("GET /v1/volumes/{id}/files", s.auth(http.HandlerFunc(s.handleListVolumeFiles)))
+		s.mux.Handle("PUT /v1/volumes/{id}/file", s.auth(http.HandlerFunc(s.handlePutVolumeFile)))
+		s.mux.Handle("GET /v1/volumes/{id}/file", s.auth(http.HandlerFunc(s.handleGetVolumeFile)))
+		s.mux.Handle("DELETE /v1/volumes/{id}/file", s.auth(http.HandlerFunc(s.handleDeleteVolumeFile)))
+		// Save a machine's /root into a volume (attach is via POST /v1/machines {volume}).
+		s.mux.Handle("POST /v1/machines/{id}/save", s.auth(http.HandlerFunc(s.handleSaveVolume)))
+	}
 
 	// WebSocket TTY + VNC. Auth is handled inside (accepts ?token= too).
 	s.mux.HandleFunc("GET /v1/machines/{id}/tty", s.handleTTY)
@@ -127,7 +149,8 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 type createRequest struct {
 	Template   string `json:"template"`
 	TTLSeconds int    `json:"ttl_seconds"`
-	Net        bool   `json:"net"` // request internet (forces a cold boot)
+	Net        bool   `json:"net"`    // request internet (forces a cold boot)
+	Volume     string `json:"volume"` // restore this volume into /root on boot
 }
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +172,12 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		log.Printf("create failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
+	}
+	// Restore a volume's snapshot into /root before the user connects (best-effort).
+	if req.Volume != "" && s.storage != nil {
+		if err := s.attachVolume(m.ID, req.Volume); err != nil {
+			log.Printf("machine %s: attach volume %s failed: %v", m.ID, req.Volume, err)
+		}
 	}
 	writeJSON(w, http.StatusCreated, m.View())
 }
