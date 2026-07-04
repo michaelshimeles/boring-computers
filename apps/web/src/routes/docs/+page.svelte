@@ -49,7 +49,7 @@ curl -s -X POST ${API}/v1/machines \\
 	<div class="mt-3 overflow-x-auto rounded-geist border border-line">
 		<table class="w-full border-collapse font-mono text-[12px]">
 			<tbody class="text-ink-muted">
-				{#each [['POST', '/v1/machines', 'Boot a machine. Body: {template, ttl_seconds}'], ['GET', '/v1/machines', 'List running machines'], ['GET', '/v1/machines/{id}', 'Fetch one machine'], ['DELETE', '/v1/machines/{id}', 'Destroy a machine now'], ['POST', '/v1/machines/{id}/branch', 'Fork a machine from its snapshot'], ['GET', '/healthz', 'Liveness + running count']] as row (row[1] + row[0])}
+				{#each [['POST', '/v1/machines', 'Boot a machine. Body: {template, ttl_seconds, net}'], ['GET', '/v1/machines', 'List running machines'], ['GET', '/v1/machines/{id}', 'Fetch one machine'], ['DELETE', '/v1/machines/{id}', 'Destroy a machine now'], ['POST', '/v1/machines/{id}/branch', 'Fork a running machine into a live clone'], ['GET', '/v1/machines/{id}/screenshot', 'PNG screenshot of a desktop'], ['POST', '/v1/machines/{id}/upload', 'Upload a file to /root (X-Filename header)'], ['GET', '/v1/machines/{id}/download?path=…', 'Download a file from the machine'], ['GET', '/healthz', 'Liveness + running count']] as row (row[1] + row[0])}
 					<tr class="border-b border-line last:border-0">
 						<td class="w-16 px-3 py-2 align-top text-accent">{row[0]}</td>
 						<td class="px-3 py-2 align-top whitespace-nowrap text-ink">{row[1]}</td>
@@ -65,7 +65,9 @@ curl -s -X POST ${API}/v1/machines \\
 		is clamped to 15–900. Pass <code class="text-ink">"net": true</code> to give the machine
 		internet (cold-boots instead of snapshot; <code class="text-ink">pip</code>/<code
 			class="text-ink">npm</code
-		>/<code class="text-ink">apk</code> install work). Guests are NAT'd and egress-firewalled.
+		>/<code class="text-ink">apk</code> install work). Guests are NAT'd and egress-firewalled. File
+		transfer and previews (below) need a connected machine — a desktop, or a shell with
+		<code class="text-ink">net</code>.
 	</p>
 
 	<h2 class="mt-12 text-[15px] font-semibold text-ink">WebSockets</h2>
@@ -75,7 +77,7 @@ curl -s -X POST ${API}/v1/machines \\
 	<div class="mt-3 overflow-x-auto rounded-geist border border-line">
 		<table class="w-full border-collapse font-mono text-[12px]">
 			<tbody class="text-ink-muted">
-				{#each [['/v1/machines/{id}/tty', 'Serial console — bytes ⇄ the guest /dev/ttyS0'], ['/v1/machines/{id}/vnc', 'RFB/VNC framebuffer for desktop machines'], ['/v1/machines/{id}/agent?goal=…', 'Run a computer-use agent; streams narration JSON']] as row (row[0])}
+				{#each [['/v1/machines/{id}/tty', 'Serial console — bytes ⇄ the guest /dev/ttyS0'], ['/v1/machines/{id}/vnc', 'RFB/VNC framebuffer for desktop machines'], ['/v1/machines/{id}/agent?goal=…', 'Computer-use agent — drives the screen; streams narration JSON'], ['/v1/machines/{id}/shell-agent?goal=…', 'Terminal agent — writes + runs code; streams narration JSON']] as row (row[0])}
 					<tr class="border-b border-line last:border-0">
 						<td class="px-3 py-2 align-top whitespace-nowrap text-ink">{row[0]}</td>
 						<td class="px-3 py-2 align-top text-ink-faint">{row[1]}</td>
@@ -83,6 +85,40 @@ curl -s -X POST ${API}/v1/machines \\
 				{/each}
 			</tbody>
 		</table>
+	</div>
+
+	<h2 class="mt-12 text-[15px] font-semibold text-ink">Previews</h2>
+	<p class="mt-2 text-[13px] leading-relaxed text-ink-muted">
+		Run a server inside a connected machine and open it at a public HTTPS URL — no config:
+	</p>
+	<div class="mt-3">
+		{@render code(`https://<machine-id>--<port>.${API.replace('https://', '')}/`)}
+	</div>
+
+	<h2 class="mt-12 text-[15px] font-semibold text-ink">Inference</h2>
+	<p class="mt-2 text-[13px] leading-relaxed text-ink-muted">
+		An OpenAI-compatible gateway — Claude runs on Anthropic, everything else routes through
+		OpenRouter. Try it in the <a href={resolve('/inference')} class="text-accent hover:underline"
+			>playground</a
+		>.
+	</p>
+	<div class="mt-3 overflow-x-auto rounded-geist border border-line">
+		<table class="w-full border-collapse font-mono text-[12px]">
+			<tbody class="text-ink-muted">
+				{#each [['POST', '/v1/chat/completions', 'Chat completions (streaming + non-streaming)'], ['GET', '/v1/models', 'List available models']] as row (row[1])}
+					<tr class="border-b border-line last:border-0">
+						<td class="w-16 px-3 py-2 align-top text-accent">{row[0]}</td>
+						<td class="px-3 py-2 align-top whitespace-nowrap text-ink">{row[1]}</td>
+						<td class="px-3 py-2 align-top text-ink-faint">{row[2]}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
+	<div class="mt-3">
+		{@render code(`curl -s ${API}/v1/chat/completions \\
+  -H 'content-type: application/json' \\
+  -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'`)}
 	</div>
 
 	<h2 class="mt-12 text-[15px] font-semibold text-ink">TypeScript client</h2>
