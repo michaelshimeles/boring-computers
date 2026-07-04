@@ -41,7 +41,10 @@ func (s *Server) handleCreateVolume(w http.ResponseWriter, r *http.Request) {
 		TTLSeconds int `json:"ttl_seconds"`
 	}
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON: " + err.Error()})
+			return
+		}
 	}
 	m, err := s.storage.Create(newVolumeID(), s.volumeTTL(req.TTLSeconds))
 	if err != nil {
@@ -57,7 +60,11 @@ func (s *Server) handleGetVolume(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no such volume (it may have expired)"})
 		return
 	}
-	files, used, _ := s.storage.ListFiles(m.ID)
+	files, used, err := s.storage.ListFiles(m.ID)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "couldn't list volume files"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": m.ID, "created_at": m.CreatedAt, "expires_at": m.ExpiresAt,
 		"quota_mb": m.QuotaMB, "used_bytes": used, "files": len(files),

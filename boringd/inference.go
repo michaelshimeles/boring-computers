@@ -134,7 +134,7 @@ func (s *Server) proxyOpenRouter(w http.ResponseWriter, req map[string]any) {
 	buf, _ := json.Marshal(req)
 	up, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(buf))
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "gateway error"})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal request build error"})
 		return
 	}
 	up.Header.Set("Authorization", "Bearer "+s.cfg.OpenRouterKey)
@@ -219,7 +219,11 @@ func (s *Server) anthropicChat(w http.ResponseWriter, reqModel string, req map[s
 		abody["system"] = system
 	}
 	buf, _ := json.Marshal(abody)
-	up, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(buf))
+	up, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(buf))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal request build error"})
+		return
+	}
 	up.Header.Set("content-type", "application/json")
 	up.Header.Set("x-api-key", s.cfg.AnthropicKey)
 	up.Header.Set("anthropic-version", "2023-06-01")
@@ -244,7 +248,11 @@ func (s *Server) anthropicChat(w http.ResponseWriter, reqModel string, req map[s
 }
 
 func translateAnthropicJSON(w http.ResponseWriter, body io.Reader, model string) {
-	data, _ := io.ReadAll(body)
+	data, err := io.ReadAll(body)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to read model response"})
+		return
+	}
 	var ar struct {
 		Content []struct {
 			Type string `json:"type"`
@@ -256,7 +264,10 @@ func translateAnthropicJSON(w http.ResponseWriter, body io.Reader, model string)
 			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
 	}
-	json.Unmarshal(data, &ar)
+	if err := json.Unmarshal(data, &ar); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "invalid model response"})
+		return
+	}
 	var text strings.Builder
 	for _, c := range ar.Content {
 		if c.Type == "text" {

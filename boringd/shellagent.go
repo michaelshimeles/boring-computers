@@ -105,7 +105,10 @@ func (s *Server) runShellAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Set a unique prompt so output capture works on any shell (desktop dash
 	// prints "# ", Alpine prints "boring:~#").
-	console.Write([]byte("PS1='" + agentPrompt + "'\n"))
+	if _, err := console.Write([]byte("PS1='" + agentPrompt + "'\n")); err != nil {
+		send("error", "the terminal is no longer available")
+		return
+	}
 	time.Sleep(300 * time.Millisecond)
 
 	tool := map[string]any{
@@ -254,7 +257,10 @@ func callAnthropicShell(cfg Config, tool map[string]any, messages []json.RawMess
 		"output_config": map[string]any{"effort": "low"},
 	}
 	buf, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(buf))
+	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(buf))
+	if err != nil {
+		return nil, fmt.Errorf("internal request build error: %w", err)
+	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("x-api-key", cfg.AnthropicKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
