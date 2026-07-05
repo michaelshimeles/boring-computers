@@ -1,0 +1,14 @@
+# Lima VM for running boringd locally on Apple Silicon (M3+ / macOS 15+).
+# vz + nestedVirtualization is what surfaces /dev/kvm inside the Linux guest so
+# Firecracker can boot microVMs. arm64 guest → needs the aarch64 boringd + images.
+vmType: vz
+rosetta:
+  enabled: false
+nestedVirtualization: true
+cpus: 4
+memory: "8GiB"
+disk: "40GiB"
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: aarch64
+mounts: []
