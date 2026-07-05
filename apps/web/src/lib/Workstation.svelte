@@ -175,7 +175,7 @@
 		try {
 			machine = machineId
 				? await getMachine(machineId)
-				: await createMachine('desktop', ttl, false, volume);
+				: await createMachine('desktop', ttl, true, volume);
 			phase = 'connecting';
 			timer.start(machine);
 			void openTerminal(machine.id);

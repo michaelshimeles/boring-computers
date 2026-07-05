@@ -7,9 +7,26 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 )
+
+// validVolumePath rejects paths containing directory traversal components.
+// It inspects the raw segments BEFORE path.Clean so a traversal-shaped input
+// like "a/../secret" is refused rather than silently collapsed to "secret"
+// (which would alias a canonical sibling). A leading dot in a filename such as
+// "..bashrc" is a valid name, not a traversal component, and is preserved.
+func validVolumePath(p string) bool {
+	p = strings.TrimPrefix(p, "/")
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return false
+		}
+	}
+	cleaned := path.Clean(p)
+	return cleaned != "" && cleaned != "." && !strings.HasPrefix(cleaned, "/")
+}
 
 // HTTP surface for persistent volumes. Volumes are addressed by an unguessable
 // id (the capability); with no accounts yet, holding the id is holding access.
@@ -41,7 +58,10 @@ func (s *Server) handleCreateVolume(w http.ResponseWriter, r *http.Request) {
 		TTLSeconds int `json:"ttl_seconds"`
 	}
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON: " + err.Error()})
+			return
+		}
 	}
 	m, err := s.storage.Create(newVolumeID(), s.volumeTTL(req.TTLSeconds))
 	if err != nil {
@@ -57,7 +77,11 @@ func (s *Server) handleGetVolume(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no such volume (it may have expired)"})
 		return
 	}
-	files, used, _ := s.storage.ListFiles(m.ID)
+	files, used, err := s.storage.ListFiles(m.ID)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "couldn't list volume files"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": m.ID, "created_at": m.CreatedAt, "expires_at": m.ExpiresAt,
 		"quota_mb": m.QuotaMB, "used_bytes": used, "files": len(files),
@@ -86,6 +110,10 @@ func (s *Server) handlePutVolumeFile(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimSpace(r.URL.Query().Get("path"))
 	if p == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "path required"})
+		return
+	}
+	if !validVolumePath(p) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid path"})
 		return
 	}
 	if _, err := s.storage.Get(id); err != nil {
@@ -119,6 +147,10 @@ func (s *Server) handleGetVolumeFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "path required"})
 		return
 	}
+	if !validVolumePath(p) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid path"})
+		return
+	}
 	obj, err := s.storage.GetFile(id, p)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no such file"})
@@ -135,6 +167,10 @@ func (s *Server) handleDeleteVolumeFile(w http.ResponseWriter, r *http.Request) 
 	p := strings.TrimSpace(r.URL.Query().Get("path"))
 	if p == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "path required"})
+		return
+	}
+	if !validVolumePath(p) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid path"})
 		return
 	}
 	if err := s.storage.DeleteFile(id, p); err != nil {

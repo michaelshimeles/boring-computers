@@ -15,6 +15,7 @@
 	"scripts": {
 		"check": "tsc --noEmit",
 		"build": "tsc",
+		"test": "vitest run",
 		"lint": "prettier --check .",
 		"format": "prettier --write ."
 	},
@@ -26,6 +27,7 @@
 		"typescript": "^6.0.3",
 		"@boring/typescript-config": "*",
 		"@boring/prettier-config": "*",
-		"@types/node": "^24"
+		"@types/node": "^24",
+		"vitest": "^4.1.8"
 	}
 }

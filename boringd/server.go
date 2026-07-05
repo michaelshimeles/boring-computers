@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
@@ -55,7 +56,9 @@ func NewServer(cfg Config, mgr *Manager) *Server {
 
 	// Path-based preview: reverse-proxy a guest port (works over the tunnel /
 	// without wildcard DNS). Any method, sub-paths, and WS upgrades.
-	s.mux.Handle("/v1/machines/{id}/web/{port}/{path...}", s.auth(http.HandlerFunc(s.handleWebProxy)))
+	// No auth: previews are opened in new browser tabs (window.open) which can't
+	// add Authorization headers. The machine ID itself is the access token.
+	s.mux.HandleFunc("/v1/machines/{id}/web/{port}/{path...}", s.handleWebProxy)
 
 	// Persistent volumes (S3-backed). Registered only when storage is configured.
 	if s.storage != nil {
@@ -130,13 +133,16 @@ func (s *Server) authorized(r *http.Request) bool {
 	}
 	if h := r.Header.Get("Authorization"); h != "" {
 		if strings.HasPrefix(h, "Bearer ") {
-			if strings.TrimSpace(strings.TrimPrefix(h, "Bearer ")) == s.cfg.Token {
+			candidate := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+			if subtle.ConstantTimeCompare([]byte(candidate), []byte(s.cfg.Token)) == 1 {
 				return true
 			}
 		}
 	}
-	if q := r.URL.Query().Get("token"); q != "" && q == s.cfg.Token {
-		return true
+	if q := r.URL.Query().Get("token"); q != "" {
+		if subtle.ConstantTimeCompare([]byte(q), []byte(s.cfg.Token)) == 1 {
+			return true
+		}
 	}
 	return false
 }
@@ -162,8 +168,10 @@ type createRequest struct {
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var req createRequest
 	if r.Body != nil {
-		// Ignore decode errors: an empty body means defaults.
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON: " + err.Error()})
+			return
+		}
 	}
 	if req.Template == "" {
 		req.Template = "python"
@@ -236,5 +244,7 @@ func (s *Server) handleBranch(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("writeJSON: encode failed: %v", err)
+	}
 }

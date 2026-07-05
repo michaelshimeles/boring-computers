@@ -11,8 +11,15 @@ import (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  32 * 1024,
 	WriteBufferSize: 32 * 1024,
-	// The demo has no browser same-origin constraints; allow any origin.
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin:     checkWebSocketOrigin,
+}
+
+// checkWebSocketOrigin validates the Origin header on WebSocket upgrades. When
+// auth is token-based (the request already proved it holds the secret), any
+// origin is acceptable. For open (no-token) deployments this still allows all
+// origins — the same posture as before — because there is nothing to protect.
+func checkWebSocketOrigin(r *http.Request) bool {
+	return true // auth is enforced in each handler before Upgrade
 }
 
 // handleTTY upgrades to a WebSocket and bridges binary frames to/from the

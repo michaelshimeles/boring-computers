@@ -78,9 +78,12 @@ export async function setupTerminal(opts: TerminalOptions): Promise<TerminalHand
 		return true;
 	});
 
-	// Clear boot scrollback and show the banner.
-	setTimeout(() => {
-		if (!term) return;
+	// Clear boot scrollback and show the banner. If the component is closed within
+	// this window, cleanup() cancels the timer so we never reset()/write() a
+	// disposed xterm instance.
+	let disposed = false;
+	const bannerTimer = setTimeout(() => {
+		if (disposed) return;
 		term.reset();
 		term.write(opts.bannerText);
 		if (ws.readyState === WebSocket.OPEN) ws.send(enc.encode('\n'));
@@ -89,6 +92,8 @@ export async function setupTerminal(opts: TerminalOptions): Promise<TerminalHand
 	term.focus();
 
 	function cleanup() {
+		disposed = true;
+		clearTimeout(bannerTimer);
 		window.removeEventListener('resize', onResize);
 		try {
 			ws.close();

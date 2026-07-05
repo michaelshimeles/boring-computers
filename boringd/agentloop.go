@@ -268,7 +268,6 @@ type blockHead struct {
 	Input map[string]any `json:"input"`
 }
 
-
 func imageBlock(png []byte) map[string]any {
 	return map[string]any{
 		"type": "image",

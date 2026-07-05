@@ -24,7 +24,9 @@ func pushToGuestCmd(console *Console, ip, guestCmd string, r io.Reader) error {
 	cmd := fmt.Sprintf(
 		`node -e 'const{spawn}=require("child_process");require("net").createServer(c=>{const p=spawn("sh",["-c",process.argv[1]]);c.pipe(p.stdin);p.on("close",()=>process.exit(0))}).listen(%d)' %s 2>/dev/null &`+"\n",
 		port, shellQuote(guestCmd))
-	console.Write([]byte(cmd))
+	if _, err := console.Write([]byte(cmd)); err != nil {
+		return fmt.Errorf("console write: %w", err)
+	}
 	conn, err := dialGuest(ip, port)
 	if err != nil {
 		return err
@@ -47,7 +49,9 @@ func pullFromGuestCmd(console *Console, ip, guestCmd string) (net.Conn, error) {
 	cmd := fmt.Sprintf(
 		`node -e 'const{spawn}=require("child_process");require("net").createServer(c=>{const p=spawn("sh",["-c",process.argv[1]]);p.stdout.pipe(c);p.on("close",()=>c.end())}).listen(%d)' %s 2>/dev/null &`+"\n",
 		port, shellQuote(guestCmd))
-	console.Write([]byte(cmd))
+	if _, err := console.Write([]byte(cmd)); err != nil {
+		return nil, fmt.Errorf("console write: %w", err)
+	}
 	return dialGuest(ip, port)
 }
 

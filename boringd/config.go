@@ -110,7 +110,7 @@ func LoadConfig() Config {
 	c := Config{
 		Addr:                envStr("BORING_ADDR", "0.0.0.0:8080"),
 		Token:               os.Getenv("BORING_TOKEN"),
-		CORSOrigin:          envStr("BORING_CORS_ORIGIN", "*"),
+		CORSOrigin:          os.Getenv("BORING_CORS_ORIGIN"),
 		MaxMachines:         envInt("BORING_MAX", 20),
 		MemReserveMB:        envInt("BORING_MEM_RESERVE_MB", 3072),
 		FirecrackerBin:      envStr("BORING_FIRECRACKER_BIN", "/opt/boring/bin/firecracker"),

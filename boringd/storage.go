@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"time"
 
@@ -64,9 +65,19 @@ func newStorage(cfg Config) (*Storage, error) {
 	return &Storage{client: cl, bucket: cfg.S3Bucket, quotaBytes: int64(cfg.VolumeQuotaMB) << 20}, nil
 }
 
-func prefix(id string) string     { return id + "/" }
-func metaKey(id string) string    { return id + "/.volume.json" }
-func fileKey(id, p string) string { return id + "/f/" + strings.TrimPrefix(p, "/") }
+func prefix(id string) string  { return id + "/" }
+func metaKey(id string) string { return id + "/.volume.json" }
+func fileKey(id, p string) string {
+	p = strings.TrimPrefix(p, "/")
+	cleaned := path.Clean(p)
+	// Collapse only genuine traversal (matching validVolumePath) so legitimate
+	// dot-prefixed filenames like ".." + "bashrc" keep their real key instead of
+	// all colliding on "_".
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") {
+		cleaned = "_"
+	}
+	return id + "/f/" + cleaned
+}
 
 // Create writes a new volume marker and returns its metadata.
 func (s *Storage) Create(id string, ttl time.Duration) (*VolumeMeta, error) {

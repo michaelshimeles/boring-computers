@@ -67,7 +67,10 @@ func (s *Server) runShellAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Set a unique prompt so output capture works on any shell (desktop dash
 	// prints "# ", Alpine prints "boring:~#").
-	console.Write([]byte("PS1='" + agentPrompt + "'\n"))
+	if _, err := console.Write([]byte("PS1='" + agentPrompt + "'\n")); err != nil {
+		guard.send("error", "the terminal is no longer available")
+		return
+	}
 	time.Sleep(300 * time.Millisecond)
 
 	tool := map[string]any{
@@ -236,7 +239,6 @@ func finalizeOutput(raw, cmd string) string {
 	}
 	return s
 }
-
 
 func userTextMessage(text string) json.RawMessage {
 	b, _ := json.Marshal(map[string]any{"role": "user", "content": text})

@@ -84,7 +84,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	cmd := fmt.Sprintf(
 		`node -e 'require("net").createServer(c=>{c.pipe(require("fs").createWriteStream(process.argv[1])).on("finish",()=>process.exit(0)).on("error",()=>process.exit(1))}).listen(%d)' %s 2>/dev/null &`+"\n",
 		port, shellQuote(dest))
-	console.Write([]byte(cmd))
+	if _, err := console.Write([]byte(cmd)); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "couldn't write to the computer's console"})
+		return
+	}
 
 	conn, err := dialGuest(ip, port)
 	if err != nil {
@@ -116,7 +119,10 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	cmd := fmt.Sprintf(
 		`node -e 'const r=require("fs").createReadStream(process.argv[1]);r.on("error",()=>process.exit(1));require("net").createServer(c=>{r.pipe(c);c.on("close",()=>process.exit(0))}).listen(%d)' %s 2>/dev/null &`+"\n",
 		port, shellQuote(p))
-	console.Write([]byte(cmd))
+	if _, err := console.Write([]byte(cmd)); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "couldn't write to the computer's console"})
+		return
+	}
 
 	conn, err := dialGuest(ip, port)
 	if err != nil {
