@@ -117,7 +117,10 @@ xsetroot -solid "#0b0b0c" 2>/dev/null
 openbox >/var/log/openbox.log 2>&1 &
 # A real browser (main window), a dev terminal that advertises the coding agents,
 # and the calculator (kept for the computer-use agent demo). xcalc honours -geometry.
-chromium --no-sandbox --test-type --disable-dev-shm-usage --disable-gpu --no-first-run \
+# Call the real ELF, not /usr/bin/chromium: Debian's launcher wrapper aborts on
+# arm64 ("[: -lt: unexpected operator"). Same path on x86_64, so it's arch-neutral.
+CHROMIUM_BIN=/usr/lib/chromium/chromium; [ -x "$CHROMIUM_BIN" ] || CHROMIUM_BIN=chromium
+"$CHROMIUM_BIN" --no-sandbox --test-type --disable-dev-shm-usage --disable-gpu --no-first-run \
   --disable-features=Translate --password-store=basic --user-data-dir=/root/.chromium \
   --window-size=900,600 --window-position=16,20 https://duckduckgo.com >/var/log/chromium.log 2>&1 &
 xterm -fa "DejaVu Sans Mono" -fs 10 -geometry 108x13+16+648 -bg "#0e0e0e" -fg "#ededed" \
