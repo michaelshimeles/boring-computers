@@ -68,13 +68,33 @@ arm64 artifacts exist (verified live):
 5. **Reach it from macOS** via the Lima-forwarded port / `ssh -L 8080:localhost:8080`,
    then point `apps/web/.env` at it and `npm run dev`.
 
+### What was verified on the M4 Pro
+
+- **python computer:** boots in **5 ms** (snapshot restore works on aarch64 too),
+  `uname -m`→`aarch64` over the serial TTY.
+- **desktop computer:** boots + renders over VNC — X, the terminal, the calculator,
+  and **all** the coding agents (`claude`, `codex`, `cursor-agent`, `pi` — cursor's
+  arm64-linux build works). Cold boot is ~45 s under nested virt (vs ~3 s bare-metal);
+  the warm pool makes it instant.
+- **chromium:** the browser launches on arm64 (validated — window + address bar).
+  Two arm64 fixes were needed and are in `build-desktop-rootfs.sh`: call the real
+  ELF `/usr/lib/chromium/chromium` (the Debian `/usr/bin/chromium` wrapper aborts
+  with `[: -lt: unexpected operator`), and start a system **dbus** first.
+- The site (`npm run dev`) launches computers against the Mac host through the
+  browser.
+
 ### Caveats (Mac)
 
-- The desktop image's coding-agent CLIs need arm64-linux builds. `claude`, `codex`,
-  `pi`, `claude-code` are npm (arch-neutral ✓); `cursor-agent`'s arm64-linux build
-  is unverified — the base **python** template is unaffected, only the desktop image.
-- Snapshot-restore (`~3 ms`) on aarch64 Firecracker is untested; cold boot is the
-  guaranteed path, and boot times differ from bare-metal x86.
+- **Guest internet:** the uplink is auto-detected (`ip route show default`), but
+  the egress firewall blocks RFC1918 destinations — and under Lima the guest's own
+  gateway *is* RFC1918 (double NAT), so a microVM's traffic to the outside is
+  dropped. The desktop's browser opens but pages don't load until the firewall is
+  relaxed for the Lima gateway (or `BORING_NET` egress rules are loosened for local
+  mode). Doesn't affect snapshot-restore or the desktop UI.
+- **Rebuilding the desktop image in a *live* Lima VM is finicky** — boringd's
+  warm-pool VM can hold `desktop.ext4` open. `setup-local.sh` builds it cleanly on
+  first run; to rebuild, `limactl stop boring` (or stop boringd) first.
+- Cold desktop boot is slow under nested virt (~45 s); the warm pool hides it.
 
 ---
 
