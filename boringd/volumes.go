@@ -13,12 +13,19 @@ import (
 )
 
 // validVolumePath rejects paths containing directory traversal components.
+// It inspects the raw segments BEFORE path.Clean so a traversal-shaped input
+// like "a/../secret" is refused rather than silently collapsed to "secret"
+// (which would alias a canonical sibling). A leading dot in a filename such as
+// "..bashrc" is a valid name, not a traversal component, and is preserved.
 func validVolumePath(p string) bool {
-	cleaned := path.Clean(strings.TrimPrefix(p, "/"))
-	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") || strings.HasSuffix(cleaned, "/..") {
-		return false
+	p = strings.TrimPrefix(p, "/")
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return false
+		}
 	}
-	return cleaned != "" && cleaned != "."
+	cleaned := path.Clean(p)
+	return cleaned != "" && cleaned != "." && !strings.HasPrefix(cleaned, "/")
 }
 
 // HTTP surface for persistent volumes. Volumes are addressed by an unguessable
