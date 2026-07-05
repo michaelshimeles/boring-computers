@@ -69,7 +69,9 @@ apt-get update
 apt-get install -y --no-install-recommends chromium
 
 # Node 22 (glibc) from the official tarball — the coding-agent CLIs need >=22.
-NODEFILE=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/ | grep -oE 'node-v22\.[0-9.]+-linux-x64\.tar\.xz' | head -1)
+# Node names the arch x64/arm64 (not x86_64/aarch64), so map from uname.
+NODE_ARCH=$(uname -m); [ "$NODE_ARCH" = "x86_64" ] && NODE_ARCH=x64; [ "$NODE_ARCH" = "aarch64" ] && NODE_ARCH=arm64
+NODEFILE=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/ | grep -oE 'node-v22\.[0-9.]+-linux-'"$NODE_ARCH"'\.tar\.xz' | head -1)
 curl -fsSL "https://nodejs.org/dist/latest-v22.x/${NODEFILE}" -o /tmp/node.tar.xz
 tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
 rm -f /tmp/node.tar.xz

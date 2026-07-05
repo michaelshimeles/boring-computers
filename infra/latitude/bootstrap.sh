@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# bootstrap.sh - Provision a fresh Ubuntu 24.04 x86_64 bare-metal box for the
+# bootstrap.sh - Provision a fresh Ubuntu 24.04 (x86_64 or aarch64) host for the
 #                "boring computers" Firecracker microVM sandbox.
 #
 # Run as root on the target box:
@@ -26,13 +26,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 GITHUB_API="https://api.github.com/repos/firecracker-microvm/firecracker/releases/latest"
 
-# Kernel candidate URLs, tried in order. First one that downloads AND passes the
-# "file" ELF/Linux-kernel check wins.
-KERNEL_URLS=(
-  "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.11/x86_64/vmlinux-6.1.128"
-  "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/x86_64/vmlinux-6.1.102"
-  "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin"
-)
+# Arch — firecracker + kernel artifacts differ between x86_64 and aarch64. uname's
+# names (x86_64 / aarch64) match firecracker's release naming, so ARCH drives both.
+ARCH="$(uname -m)"
+
+# Kernel candidate URLs (arch-specific), tried in order. First one that downloads
+# AND passes the "file" ELF/Linux-kernel check wins.
+case "${ARCH}" in
+  x86_64)
+    KERNEL_URLS=(
+      "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.11/x86_64/vmlinux-6.1.128"
+      "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/x86_64/vmlinux-6.1.102"
+      "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin"
+    ) ;;
+  aarch64)
+    KERNEL_URLS=(
+      "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/aarch64/vmlinux-6.1.128"
+      "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/aarch64/vmlinux-6.1.102"
+      "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/aarch64/kernels/vmlinux.bin"
+    ) ;;
+esac
 
 # --------------------------------------------------------------------------
 # Logging helpers
@@ -46,8 +59,11 @@ die()  { printf '\033[1;31m[bootstrap:error]\033[0m %s\n' "$*" >&2; exit 1; }
 # --------------------------------------------------------------------------
 [ "$(id -u)" -eq 0 ] || die "must run as root (use sudo)"
 
-ARCH="$(uname -m)"
-[ "${ARCH}" = "x86_64" ] || die "unsupported arch '${ARCH}', expected x86_64"
+case "${ARCH}" in
+  x86_64 | aarch64) : ;;
+  *) die "unsupported arch '${ARCH}', expected x86_64 or aarch64" ;;
+esac
+log "Target arch: ${ARCH}"
 
 # --------------------------------------------------------------------------
 # 1. Packages
@@ -114,24 +130,24 @@ install_firecracker() {
   trap 'rm -rf "${tmp}"' RETURN
 
   local tgz="${tmp}/firecracker.tgz"
-  local url="https://github.com/firecracker-microvm/firecracker/releases/download/${tag}/firecracker-${tag}-x86_64.tgz"
+  local url="https://github.com/firecracker-microvm/firecracker/releases/download/${tag}/firecracker-${tag}-${ARCH}.tgz"
   log "Downloading ${url}"
   curl -fSL --retry 3 -o "${tgz}" "${url}" || die "failed to download firecracker release tarball"
 
   log "Extracting release tarball..."
   tar -xzf "${tgz}" -C "${tmp}"
 
-  # Layout inside tarball: release-<tag>-x86_64/firecracker-<tag>-x86_64 and jailer-<tag>-x86_64
-  local rel_dir="${tmp}/release-${tag}-x86_64"
-  local fc_bin="${rel_dir}/firecracker-${tag}-x86_64"
-  local jail_bin="${rel_dir}/jailer-${tag}-x86_64"
+  # Layout inside tarball: release-<tag>-<arch>/firecracker-<tag>-<arch> and jailer-<tag>-<arch>
+  local rel_dir="${tmp}/release-${tag}-${ARCH}"
+  local fc_bin="${rel_dir}/firecracker-${tag}-${ARCH}"
+  local jail_bin="${rel_dir}/jailer-${tag}-${ARCH}"
 
   # Fall back to a glob search if the expected path differs.
   if [ ! -f "${fc_bin}" ]; then
-    fc_bin="$(find "${tmp}" -type f -name "firecracker-*-x86_64" ! -name '*.debug' | head -n1)"
+    fc_bin="$(find "${tmp}" -type f -name "firecracker-*-${ARCH}" ! -name '*.debug' | head -n1)"
   fi
   if [ ! -f "${jail_bin}" ]; then
-    jail_bin="$(find "${tmp}" -type f -name "jailer-*-x86_64" ! -name '*.debug' | head -n1)"
+    jail_bin="$(find "${tmp}" -type f -name "jailer-*-${ARCH}" ! -name '*.debug' | head -n1)"
   fi
 
   [ -f "${fc_bin}" ]   || die "firecracker binary not found in release tarball"

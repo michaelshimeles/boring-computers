@@ -22,7 +22,7 @@ IMG_SIZE_MB="${IMG_SIZE_MB:-1280}"   # room for the Claude Code CLI
 
 ALPINE_MIRROR="https://dl-cdn.alpinelinux.org/alpine"
 ALPINE_BRANCH="${ALPINE_BRANCH:-v3.20}"     # 3.x series
-ALPINE_ARCH="x86_64"
+ALPINE_ARCH="$(uname -m)"     # x86_64 / aarch64 — matches Alpine's arch naming
 
 # --------------------------------------------------------------------------
 # Logging helpers
