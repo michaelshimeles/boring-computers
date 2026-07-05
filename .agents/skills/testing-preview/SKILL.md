@@ -33,7 +33,7 @@ import websocket, time
 ws = websocket.create_connection('ws://localhost:8080/v1/machines/MACHINE_ID/tty',
     header=['Authorization: Bearer test-token'])
 time.sleep(0.5)
-ws.send(b'python3 -m http.server 8000 --bind 0.0.0.0 &\n')
+ws.send(b'cd / && python3 -m http.server 8000 --bind 0.0.0.0 &\n')
 time.sleep(2)
 ws.close()
 "
@@ -41,9 +41,12 @@ ws.close()
 
 ## Key Test Cases
 
-1. **Preview without auth**: `curl http://localhost:8080/v1/machines/{id}/web/8000/` should return content (no auth header needed)
+The server above is started from `/` (`cd /`), so `http.server` serves the guest's
+root filesystem — that makes the sub-path test below resolve.
+
+1. **Preview without auth**: `curl http://localhost:8080/v1/machines/{id}/web/8000/` should return content (the `/` directory listing; no auth header needed)
 2. **Other routes still require auth**: `curl http://localhost:8080/v1/machines/{id}` should return 401
-3. **Sub-path routing**: `curl http://localhost:8080/v1/machines/{id}/web/8000/etc/` should show /etc/ directory
+3. **Sub-path routing**: `curl http://localhost:8080/v1/machines/{id}/web/8000/etc/` should show the guest's `/etc` directory listing (proves sub-paths are proxied through)
 4. **Via Vite proxy**: `curl http://localhost:5173/boring/v1/machines/{id}/web/8000/` should work
 
 ## Architecture Notes
