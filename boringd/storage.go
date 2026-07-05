@@ -70,7 +70,10 @@ func metaKey(id string) string    { return id + "/.volume.json" }
 func fileKey(id, p string) string {
 	p = strings.TrimPrefix(p, "/")
 	cleaned := path.Clean(p)
-	if cleaned == "." || strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, "/../") {
+	// Collapse only genuine traversal (matching validVolumePath) so legitimate
+	// dot-prefixed filenames like ".." + "bashrc" keep their real key instead of
+	// all colliding on "_".
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") {
 		cleaned = "_"
 	}
 	return id + "/f/" + cleaned
