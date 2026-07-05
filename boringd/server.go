@@ -53,6 +53,10 @@ func NewServer(cfg Config, mgr *Manager) *Server {
 	s.mux.Handle("POST /v1/machines/{id}/upload", s.auth(http.HandlerFunc(s.handleUpload)))
 	s.mux.Handle("GET /v1/machines/{id}/download", s.auth(http.HandlerFunc(s.handleDownload)))
 
+	// Path-based preview: reverse-proxy a guest port (works over the tunnel /
+	// without wildcard DNS). Any method, sub-paths, and WS upgrades.
+	s.mux.Handle("/v1/machines/{id}/web/{port}/{path...}", s.auth(http.HandlerFunc(s.handleWebProxy)))
+
 	// Persistent volumes (S3-backed). Registered only when storage is configured.
 	if s.storage != nil {
 		s.mux.Handle("POST /v1/volumes", s.auth(http.HandlerFunc(s.handleCreateVolume)))

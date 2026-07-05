@@ -330,7 +330,8 @@
 				return;
 			}
 			if (m.type === 'preview') {
-				previewLink = m.text ?? '';
+				const port = parseInt(m.text ?? '', 10);
+				if (machine && Number.isInteger(port)) previewLink = previewUrl(machine.id, port);
 			} else if (m.type === 'done') {
 				agentLine = m.text || 'done ✓';
 				finish();

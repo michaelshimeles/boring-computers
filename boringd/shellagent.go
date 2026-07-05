@@ -27,7 +27,7 @@ Before each command, write ONE short, friendly, first-person sentence about what
 
 Create files with here-docs, e.g. cat > app.py <<'EOF' … EOF. Keep commands non-interactive (-y, --quiet) and NEVER block the terminal — run servers in the BACKGROUND with & .
 
-If the goal is a web app, site, or server: build it, START it in the background on a port (e.g. python3 -m http.server 8000 & or node server.js &), curl localhost:<port> to confirm it responds, and then in your FINAL message include exactly PORT=<the port> on its own — that gives the user a live link to open.
+If the goal is a web app, game, site, or server: build it as a self-contained page when possible, START a server in the BACKGROUND bound to 0.0.0.0 on a port (python3 may be absent — a tiny node http server is the safe choice, e.g. node -e 'require("http").createServer((q,r)=>{r.end(require("fs").readFileSync("index.html"))}).listen(8000,"0.0.0.0")' & — or python3 -m http.server 8000 --bind 0.0.0.0 & if python3 exists), curl localhost:<port> to confirm it responds, and then in your FINAL message include exactly PORT=<the port> on its own line — that gives the user a live, playable link.
 
 You have a limited number of steps — be efficient. When done, reply with one sentence starting with "Done:" and stop calling tools.`
 
@@ -141,10 +141,11 @@ func (s *Server) runShellAgent(w http.ResponseWriter, r *http.Request) {
 			case "text":
 				if t := strings.TrimSpace(b.Text); t != "" {
 					send("say", t)
-					// The agent reports the port it served on → hand back a live link.
-					if m := portRe.FindStringSubmatch(b.Text); m != nil && s.cfg.PreviewBase != "" {
+					// The agent reports the port it served on → hand back the port so
+					// the frontend builds a live (path-based) preview link.
+					if m := portRe.FindStringSubmatch(b.Text); m != nil {
 						if port, _ := strconv.Atoi(m[1]); port > 0 && port < 65536 {
-							send("preview", fmt.Sprintf("https://%s--%d.%s", id, port, s.cfg.PreviewBase))
+							send("preview", m[1])
 						}
 					}
 				}

@@ -50,18 +50,13 @@ export async function branchMachine(id: string): Promise<Machine> {
 	return (await res.json()) as Machine;
 }
 
-/** Host of the boringd endpoint, used as the base for preview subdomains. */
-export const previewBase = (() => {
-	try {
-		return new URL(PUB || 'http://localhost:8080').host;
-	} catch {
-		return 'localhost:8080';
-	}
-})();
-
-/** Public HTTPS URL for a port running inside a machine: <id>--<port>.<base>. */
+/**
+ * Browser-openable URL for a port running inside a machine, reverse-proxied by
+ * boringd. Path-based (not a subdomain), so it works over the dev tunnel and on
+ * public deployments without wildcard DNS.
+ */
 export function previewUrl(id: string, port: number): string {
-	return `https://${id}--${port}.${previewBase}/`;
+	return `${apiBase}/v1/machines/${id}/web/${port}/`;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

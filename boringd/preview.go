@@ -89,6 +89,42 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request, id string
 	proxy.ServeHTTP(w, r)
 }
 
+// handleWebProxy reverse-proxies /v1/machines/{id}/web/{port}/{path...} to the
+// guest's port. Unlike the subdomain preview, this needs no wildcard DNS or TLS
+// — it rides the normal API path, so it works over an SSH tunnel (local dev) and
+// on public deployments alike. WebSocket upgrades pass through.
+func (s *Server) handleWebProxy(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	port, err := strconv.Atoi(r.PathValue("port"))
+	if err != nil || port < 1 || port > 65535 {
+		http.Error(w, "bad port", http.StatusBadRequest)
+		return
+	}
+	if _, ok := s.mgr.Get(id); !ok {
+		http.Error(w, "this computer is gone", http.StatusNotFound)
+		return
+	}
+	ip, ok := s.mgr.machineIP(id)
+	if !ok {
+		http.Error(w, "this computer isn't on the network (a desktop, or a shell with net)", http.StatusBadGateway)
+		return
+	}
+	target := &url.URL{Scheme: "http", Host: net.JoinHostPort(ip, strconv.Itoa(port))}
+	rest := r.PathValue("path") // the wildcard tail, no leading slash
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	base := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		base(req)
+		req.URL.Path = "/" + rest
+		req.URL.RawQuery = r.URL.RawQuery
+		req.Host = target.Host
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
+		http.Error(w, fmt.Sprintf("nothing is listening on port %d in this computer yet", port), http.StatusBadGateway)
+	}
+	proxy.ServeHTTP(w, r)
+}
+
 // handleTLSCheck is Caddy's on-demand-TLS gate: a cert is only issued for a
 // hostname that maps to a live machine, so random hosts can't burn cert quota.
 func (s *Server) handleTLSCheck(w http.ResponseWriter, r *http.Request) {
