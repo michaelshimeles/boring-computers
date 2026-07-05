@@ -64,8 +64,8 @@ log "bootstrap (firecracker + jailer + kernel + base rootfs)…"
 invm 'bash /root/infra/bootstrap.sh'
 log "base rootfs (python + node + claude)…"
 invm 'bash /root/infra/build-rootfs.sh'
-log "python snapshot template…"
-invm 'bash /root/infra/build-template.sh python'
+log "python snapshot template (~3ms restore; non-fatal — cold boot works without it)…"
+invm 'bash /root/infra/build-template.sh python' || log "  snapshot template unavailable on ${GUEST_ARCH} — python will cold-boot instead"
 if [ "${SKIP_DESKTOP:-}" = "1" ]; then
 	log "skipping desktop image (SKIP_DESKTOP=1)"
 else
@@ -96,13 +96,17 @@ EOF
 invm 'systemctl daemon-reload && systemctl enable --now boringd && sleep 2 && systemctl is-active boringd'
 
 # --- 7. verify -------------------------------------------------------------
-log "Health check (Lima forwards guest :8080 → Mac 127.0.0.1:8080)…"
+# The Lima portForward exposes the guest's :8080 on the Mac at hostPort (8088).
+HOST_PORT="${HOST_PORT:-8088}"
+log "Health check (Lima forwards guest :8080 → Mac 127.0.0.1:${HOST_PORT})…"
 sleep 2
-HEALTH="$(curl -s --max-time 8 http://127.0.0.1:8080/healthz || true)"
+HEALTH="$(curl -s --max-time 8 http://127.0.0.1:${HOST_PORT}/healthz || true)"
 echo "  ${HEALTH}"
-echo "${HEALTH}" | grep -q '"ok":true' || die "boringd up in the guest but not reachable on the Mac — check the portForwards in ${LIMA_YAML}"
+# Verify it's actually boringd (its healthz carries "kvm"), not some other local
+# service that happens to answer on this port.
+echo "${HEALTH}" | grep -q '"kvm"' || die "port ${HOST_PORT} on the Mac isn't boringd (got: ${HEALTH:-nothing}) — is something else bound to it? set HOST_PORT= to a free port and re-run."
 
 log "Done. A boring computers host is running on your Mac (in the '${VM}' Lima VM)."
-echo "  Point apps/web/.env at it:  BORING_URL=http://localhost:8080 $( [ -n "${BORING_TOKEN:-}" ] && echo "(+ BORING_TOKEN)" )"
+echo "  Point apps/web/.env at it:  BORING_URL=http://localhost:${HOST_PORT} $( [ -n "${BORING_TOKEN:-}" ] && echo "(+ BORING_TOKEN)" )"
 echo "  Then:  npm run dev -w web   → http://localhost:5173"
 echo "  Stop the VM (frees RAM):  limactl stop ${VM}"

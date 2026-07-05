@@ -1,15 +1,33 @@
 # Running boring computers locally (Mac & Windows)
 
-**Feasibility spike — both paths work.** boringd runs Firecracker microVMs, which
-need **Linux + a functional `/dev/kvm`**. Neither macOS nor Windows provides that
-natively, but both can host a Linux VM that *does* — and Firecracker only needs
-**one** level of nested virtualization, which modern Macs and Windows 11 both
-expose.
+**The Mac path is built and proven** — one command
+([`setup-local.sh`](setup-local.sh)) turns an Apple Silicon Mac into a boring
+computers host (in a Lima nested-virt VM), and a real arm64 Firecracker microVM
+boots on it in **~5 ms**. Windows is designed but not yet wired up (it's the
+easier path — see below).
 
-| Path | Verdict | Why | Extra work vs a Linux box |
+boringd runs Firecracker microVMs, which need **Linux + a functional `/dev/kvm`**.
+Neither macOS nor Windows provides that natively, but both can host a Linux VM
+that *does* — Firecracker needs only **one** level of nested virtualization, which
+modern Macs and Windows 11 both expose.
+
+## Quickstart (Mac)
+
+```sh
+brew install lima                                  # once
+BORING_ANTHROPIC_KEY=sk-ant-... ./infra/local/setup-local.sh
+# → builds the arm64 stack in a Lima VM, forwards :8080 to the Mac at :8088
+echo 'BORING_URL=http://localhost:8088' > apps/web/.env
+npm run dev -w web                                 # → http://localhost:5173
+```
+
+`SKIP_DESKTOP=1` skips the ~8-min desktop image (the python shell still works).
+`limactl stop boring` frees the VM's RAM.
+
+| Path | Status | Why | Extra work vs a Linux box |
 | --- | --- | --- | --- |
-| **Windows 11 (x86_64)** | ✅ easiest | WSL2 ships a KVM-enabled kernel; nested virt is on by default | ~none — the **existing x86_64 images work unchanged** |
-| **Apple Silicon Mac** | ✅ proven, more work | nested virt on M3+/macOS 15+ exposes `/dev/kvm` in a Linux guest | needs **arm64 rebuilds** of firecracker/kernel/rootfs |
+| **Apple Silicon Mac** | ✅ **built + booted a microVM** | nested virt on M3+/macOS 15+ exposes `/dev/kvm` in a Linux guest | arm64 rebuilds — done, automated by `setup-local.sh` |
+| **Windows 11 (x86_64)** | ✅ designed (not yet wired) | WSL2 ships a KVM-enabled kernel; nested virt on by default | ~none — the **existing x86_64 images work unchanged** |
 
 ---
 
