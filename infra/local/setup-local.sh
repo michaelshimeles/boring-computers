@@ -33,7 +33,7 @@ command -v go >/dev/null || die "Go not installed on the Mac (needed to cross-bu
 if ! limactl list -q 2>/dev/null | grep -qx "${VM}"; then
 	log "Creating Lima VM '${VM}' (nested-virt arm64 Ubuntu)…"
 	limactl start --name="${VM}" --tty=false "${LIMA_YAML}"
-elif [ "$(limactl list --json 2>/dev/null | grep -o "\"name\":\"${VM}\"[^}]*\"status\":\"[^\"]*\"" | grep -o 'Running' || true)" != "Running" ]; then
+elif [ "$(limactl list --format '{{.Status}}' "${VM}" 2>/dev/null)" != "Running" ]; then
 	log "Starting Lima VM '${VM}'…"
 	limactl start "${VM}"
 else
@@ -62,8 +62,7 @@ invm 'chmod +x /usr/local/bin/boringd'
 # --- 5. build the stack in the guest (arch-adapted scripts auto-detect) ------
 log "bootstrap (firecracker + jailer + kernel + base rootfs)…"
 invm 'bash /root/infra/bootstrap.sh'
-log "base rootfs (python + node + claude)…"
-invm 'bash /root/infra/build-rootfs.sh'
+# (bootstrap.sh already calls build-rootfs.sh — no separate invocation needed)
 log "python snapshot template (~3ms restore; non-fatal — cold boot works without it)…"
 invm 'bash /root/infra/build-template.sh python' || log "  snapshot template unavailable on ${GUEST_ARCH} — python will cold-boot instead"
 if [ "${SKIP_DESKTOP:-}" = "1" ]; then
