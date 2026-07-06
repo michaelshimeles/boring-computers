@@ -96,7 +96,10 @@ EOF
 invm 'systemctl daemon-reload && systemctl enable --now boringd && sleep 2 && systemctl is-active boringd'
 
 # --- 7. verify -------------------------------------------------------------
-# The Lima portForward exposes the guest's :8080 on the Mac at hostPort (8088).
+# Read the forwarded host port from the Lima config (single source of truth) so
+# the health check always matches the actual forward. Change the port by editing
+# hostPort in lima-boring.yaml, not a separate override.
+HOST_PORT="$(grep -oE 'hostPort:[[:space:]]*[0-9]+' "${LIMA_YAML}" | grep -oE '[0-9]+' | head -1)"
 HOST_PORT="${HOST_PORT:-8088}"
 log "Health check (Lima forwards guest :8080 → Mac 127.0.0.1:${HOST_PORT})…"
 sleep 2
@@ -104,7 +107,7 @@ HEALTH="$(curl -s --max-time 8 http://127.0.0.1:${HOST_PORT}/healthz || true)"
 echo "  ${HEALTH}"
 # Verify it's actually boringd (its healthz carries "kvm"), not some other local
 # service that happens to answer on this port.
-echo "${HEALTH}" | grep -q '"kvm"' || die "port ${HOST_PORT} on the Mac isn't boringd (got: ${HEALTH:-nothing}) — is something else bound to it? set HOST_PORT= to a free port and re-run."
+echo "${HEALTH}" | grep -q '"kvm"' || die "port ${HOST_PORT} on the Mac isn't boringd (got: ${HEALTH:-nothing}) — is something else bound to it? change hostPort in ${LIMA_YAML} to a free port, then 'limactl stop ${VM}' and re-run."
 
 log "Done. A boring computers host is running on your Mac (in the '${VM}' Lima VM)."
 echo "  Point apps/web/.env at it:  BORING_URL=http://localhost:${HOST_PORT} $( [ -n "${BORING_TOKEN:-}" ] && echo "(+ BORING_TOKEN)" )"
