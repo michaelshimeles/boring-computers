@@ -115,6 +115,9 @@ i=0; while [ ! -S /tmp/.X11-unix/X0 ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 
 
 xsetroot -solid "#0b0b0c" 2>/dev/null
 openbox >/var/log/openbox.log 2>&1 &
+# chromium needs a system dbus; start one (harmless if already up).
+dbus-uuidgen --ensure 2>/dev/null || true
+mkdir -p /run/dbus && dbus-daemon --system --fork 2>/dev/null || true
 # A real browser (main window), a dev terminal that advertises the coding agents,
 # and the calculator (kept for the computer-use agent demo). xcalc honours -geometry.
 # Call the real ELF, not /usr/bin/chromium: Debian's launcher wrapper aborts on
