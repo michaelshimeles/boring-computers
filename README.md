@@ -11,7 +11,14 @@ and self-destructs when it's done (or stays up as long as you want).
 [boringcomputers.com](https://boringcomputers.com) is a showcase; you run the real
 thing yourself.
 
+!["build a snake game I can play" → a warm desktop boots in seconds, the AI writes and serves the game, and you play it at a live URL](docs/demo.gif)
+
+<details>
+<summary>What a boring computer looks like</summary>
+
 ![A boring computer: a live desktop with a browser and calculator, a terminal with claude/codex/cursor/pi preinstalled, and an AI build box](docs/hero.png)
+
+</details>
 
 > One machine, everything on it — a live desktop with a real browser, a terminal
 > with coding agents preinstalled, and an AI you can hand the whole thing to.
