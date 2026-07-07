@@ -35,6 +35,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # The web workspace's vitest browser-mode project drives real chromium.
+      - run: npx playwright install --with-deps chromium
       - run: npm run check
       - run: npm run lint
       - run: npm test -w boring-computers-sdk
