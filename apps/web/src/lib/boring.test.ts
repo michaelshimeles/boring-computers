@@ -8,6 +8,7 @@ import {
 	fleetCount,
 	getMachine,
 	previewUrl,
+	publishMachine,
 	saveMachine,
 	wsUrl
 } from './boring';
@@ -127,6 +128,25 @@ describe('branchMachine', () => {
 		fetchMock.mockResolvedValueOnce(jsonResponse({}, { status: 502 }));
 
 		await expect(branchMachine('m1')).rejects.toThrow('fork failed (502)');
+	});
+});
+
+describe('publishMachine', () => {
+	it('POSTs the name and returns the template', async () => {
+		const tpl = { name: 'custom-py', size_mb: 1536 };
+		fetchMock.mockResolvedValueOnce(jsonResponse(tpl));
+
+		await expect(publishMachine('m1', 'custom-py')).resolves.toEqual(tpl);
+		expect(fetchMock.mock.calls[0][0]).toBe('/boring/v1/machines/m1/publish');
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ name: 'custom-py' });
+	});
+
+	it('surfaces the server error (e.g. duplicate name)', async () => {
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({ error: 'a template with that name already exists' }, { status: 409 })
+		);
+
+		await expect(publishMachine('m1', 'custom-py')).rejects.toThrow('already exists');
 	});
 });
 

@@ -8,6 +8,7 @@
 		branchMachine,
 		extendMachine,
 		createVolume,
+		publishMachine,
 		saveMachine,
 		previewUrl,
 		type Machine
@@ -164,6 +165,29 @@
 			fileMsg = '⚠ ' + (e instanceof Error ? e.message : 'save failed');
 		} finally {
 			saving = false;
+			setTimeout(() => (fileMsg = ''), 8000);
+		}
+	}
+
+	// Publish: freeze this machine's exact state as a named template — future
+	// machines boot from it in milliseconds. The name field toggles inline.
+	let publishing = $state(false);
+	let publishOpen = $state(false);
+	let publishName = $state('');
+	async function publish() {
+		const name = publishName.trim();
+		if (!machine || publishing || !name) return;
+		publishing = true;
+		fileMsg = '📀 publishing template…';
+		try {
+			const t = await publishMachine(machine.id, name);
+			publishOpen = false;
+			publishName = '';
+			fileMsg = `📀 published as "${t.name}" — new machines boot it in ms`;
+		} catch (e) {
+			fileMsg = '⚠ ' + (e instanceof Error ? e.message : 'publish failed');
+		} finally {
+			publishing = false;
 			setTimeout(() => (fileMsg = ''), 8000);
 		}
 	}
@@ -445,6 +469,32 @@
 					title="Clone this running computer into a new one"
 					>{forking ? 'forking…' : 'fork ⑂'}</button
 				>
+				{#if publishOpen}
+					<span class="flex items-center gap-1">
+						<input
+							bind:value={publishName}
+							onkeydown={(e) => {
+								if (e.key === 'Enter') void publish();
+								if (e.key === 'Escape') publishOpen = false;
+							}}
+							placeholder="template-name"
+							class="w-28 rounded-[4px] border border-line bg-black px-1 py-0.5 text-ink placeholder:text-ink-faint focus:border-white/25 focus:outline-none"
+						/>
+						<button
+							class="text-ink-subtle transition-colors hover:text-ink disabled:opacity-40"
+							onclick={publish}
+							disabled={publishing || !publishName.trim()}>{publishing ? '…' : 'ok'}</button
+						>
+					</span>
+				{:else}
+					<button
+						class="text-ink-subtle transition-colors hover:text-ink disabled:opacity-40"
+						onclick={() => (publishOpen = true)}
+						disabled={publishing}
+						title="Freeze this exact state as a named template — boot it again in milliseconds"
+						>publish 📀</button
+					>
+				{/if}
 				<button class="text-ink-subtle transition-colors hover:text-ink" onclick={copyShare}
 					>{copied ? 'copied ✓' : 'share'}</button
 				>

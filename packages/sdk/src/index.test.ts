@@ -269,6 +269,71 @@ describe('volumes', () => {
 	});
 });
 
+describe('branchMachines (fleet fork)', () => {
+	it('POSTs ?count=N and unwraps the machines array', async () => {
+		const forks = [
+			{ ...MACHINE, id: 'f1', parent: 'm1' },
+			{ ...MACHINE, id: 'f2', parent: 'm1' }
+		];
+		fetchMock.mockResolvedValue(ok({ machines: forks, requested: 2 }));
+
+		const out = await Effect.runPromise(make().branchMachines('m1', 2));
+
+		expect(out.map((m) => m.id)).toEqual(['f1', 'f2']);
+		expect(out[0].parent).toBe('m1');
+		expect(calledUrl()).toBe('http://localhost:8080/v1/machines/m1/branch?count=2');
+	});
+
+	it('count=1 uses the bare-machine endpoint and wraps it', async () => {
+		fetchMock.mockResolvedValue(ok(MACHINE));
+
+		const out = await Effect.runPromise(make().branchMachines('m1', 1));
+
+		expect(out).toEqual([MACHINE]);
+		expect(calledUrl()).toBe('http://localhost:8080/v1/machines/m1/branch');
+	});
+});
+
+describe('templates', () => {
+	const TEMPLATE = {
+		name: 'custom-py',
+		published: true,
+		display: false,
+		size_mb: 1536,
+		created_at: '2026-01-01T00:00:00Z',
+		source_template: 'python'
+	} as const;
+
+	it('publishMachine POSTs the name and decodes the template', async () => {
+		fetchMock.mockResolvedValue(ok(TEMPLATE));
+
+		const t = await Effect.runPromise(make().publishMachine('m1', 'custom-py'));
+
+		expect(t).toEqual(TEMPLATE);
+		expect(calledUrl()).toBe('http://localhost:8080/v1/machines/m1/publish');
+		expect(JSON.parse(calledBody())).toEqual({ name: 'custom-py' });
+	});
+
+	it('listTemplates unwraps the templates array (built-ins lack size)', async () => {
+		fetchMock.mockResolvedValue(
+			ok({ templates: [{ name: 'python', published: false, display: false }, TEMPLATE] })
+		);
+
+		const ts = await Effect.runPromise(make().listTemplates);
+
+		expect(ts.map((t) => t.name)).toEqual(['python', 'custom-py']);
+	});
+
+	it('deleteTemplate DELETEs and surfaces the built-in refusal', async () => {
+		fetchMock.mockResolvedValue(err(400, 'built-in templates cannot be deleted'));
+
+		const failure = await failureOf(make().deleteTemplate('python'));
+
+		expect(failure).toMatchObject({ _tag: 'ResponseError', status: 400 });
+		expect(calledUrl()).toBe('http://localhost:8080/v1/templates/python');
+	});
+});
+
 describe('extendMachine', () => {
 	it('POSTs the ttl and decodes the machine with its new expiry', async () => {
 		fetchMock.mockResolvedValue(ok(MACHINE));

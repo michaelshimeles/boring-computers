@@ -35,9 +35,21 @@ const MachineSchema = Schema.Struct({
 	boot_ms: Schema.Number,
 	template: Schema.String,
 	created_at: Schema.String,
-	expires_at: Schema.String
+	expires_at: Schema.String,
+	/** Set on forks: the machine this one was branched from. */
+	parent: Schema.optional(Schema.String)
 });
 const MachineListSchema = Schema.Struct({ machines: Schema.Array(MachineSchema) });
+
+const TemplateSchema = Schema.Struct({
+	name: Schema.String,
+	published: Schema.Boolean,
+	display: Schema.Boolean,
+	size_mb: Schema.optional(Schema.Number),
+	created_at: Schema.optional(Schema.String),
+	source_template: Schema.optional(Schema.String)
+});
+const TemplateListSchema = Schema.Struct({ templates: Schema.Array(TemplateSchema) });
 
 const VolumeSchema = Schema.Struct({
 	id: Schema.String,
@@ -55,6 +67,9 @@ export type MachineStatus = Machine['status'];
 
 /** A persistent volume (S3-backed storage that outlives a machine). */
 export type Volume = Schema.Schema.Type<typeof VolumeSchema>;
+
+/** A machine template: built-in (python, desktop) or published from a machine. */
+export type Template = Schema.Schema.Type<typeof TemplateSchema>;
 
 const ExecResultSchema = Schema.Struct({
 	output: Schema.String,
@@ -120,6 +135,24 @@ export interface BoringClient {
 	readonly getMachine: (id: string) => Effect.Effect<Machine, BoringError>;
 	readonly destroyMachine: (id: string) => Effect.Effect<void, BoringError>;
 	readonly branchMachine: (id: string) => Effect.Effect<Machine, BoringError>;
+	/**
+	 * Fleet fork: N live clones from ONE snapshot of the machine (the source is
+	 * paused once, however many clones are made). Partial failures keep the
+	 * successes — the array holds whatever booted. Each clone's `parent` is set.
+	 */
+	readonly branchMachines: (
+		id: string,
+		count: number
+	) => Effect.Effect<ReadonlyArray<Machine>, BoringError>;
+	/**
+	 * Freeze a running machine as a named template; new machines boot from it in
+	 * milliseconds via `createMachine({template: name})`. 409 if the name exists.
+	 */
+	readonly publishMachine: (id: string, name: string) => Effect.Effect<Template, BoringError>;
+	/** List templates: the built-ins plus everything published. */
+	readonly listTemplates: Effect.Effect<ReadonlyArray<Template>, BoringError>;
+	/** Delete a published template (built-ins are refused). */
+	readonly deleteTemplate: (name: string) => Effect.Effect<void, BoringError>;
 	/**
 	 * Reset a machine's TTL to `ttlSeconds` from now (omit for the server's
 	 * default; clamped like create). Returns the machine with its new expiry.
@@ -264,6 +297,22 @@ export const make = (options: BoringClientOptions = {}): BoringClient => {
 		destroyMachine: (id) => request('DELETE', `/v1/machines/${encodeURIComponent(id)}`, null),
 		branchMachine: (id) =>
 			request('POST', `/v1/machines/${encodeURIComponent(id)}/branch`, MachineSchema),
+		branchMachines: (id, count) =>
+			count <= 1
+				? request('POST', `/v1/machines/${encodeURIComponent(id)}/branch`, MachineSchema).pipe(
+						Effect.map((m) => [m] as ReadonlyArray<Machine>)
+					)
+				: request(
+						'POST',
+						`/v1/machines/${encodeURIComponent(id)}/branch?count=${Math.floor(count)}`,
+						MachineListSchema
+					).pipe(Effect.map((r) => r.machines)),
+		publishMachine: (id, name) =>
+			request('POST', `/v1/machines/${encodeURIComponent(id)}/publish`, TemplateSchema, { name }),
+		listTemplates: request('GET', '/v1/templates', TemplateListSchema).pipe(
+			Effect.map((r) => r.templates)
+		),
+		deleteTemplate: (name) => request('DELETE', `/v1/templates/${encodeURIComponent(name)}`, null),
 		extendMachine: (id, ttlSeconds) =>
 			request(
 				'POST',

@@ -54,6 +54,23 @@ export async function extendMachine(id: string, ttlSeconds: number): Promise<Mac
 	return (await res.json()) as Machine;
 }
 
+/** Freeze a machine's current state as a named template (boots in ms later). */
+export async function publishMachine(
+	id: string,
+	name: string
+): Promise<{ name: string; size_mb?: number }> {
+	const res = await fetch(`${apiBase}/v1/machines/${id}/publish`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ name })
+	});
+	if (!res.ok) {
+		const j = await res.json().catch(() => ({}));
+		throw new Error(j.error ?? `publish failed (${res.status})`);
+	}
+	return (await res.json()) as { name: string; size_mb?: number };
+}
+
 /** Fork a running machine: clones its live state into a new machine. */
 export async function branchMachine(id: string): Promise<Machine> {
 	const res = await fetch(`${apiBase}/v1/machines/${id}/branch`, { method: 'POST' });
